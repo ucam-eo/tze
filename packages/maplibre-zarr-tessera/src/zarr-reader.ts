@@ -95,5 +95,6 @@ export async function fetchRegion(
   const sel = slices.map(s =>
     s === null ? null : zarr.slice(s[0], s[1])
   );
-  return await zarr.get(arr, sel);
+  const chunk = await zarr.get(arr, sel);
+  return chunk as { data: ArrayBufferView; shape: number[] };
 }
