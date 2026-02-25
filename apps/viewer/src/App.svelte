@@ -11,7 +11,7 @@
   import type SimilaritySearch from './components/SimilaritySearch.svelte';
   import { zarrSource } from './stores/zarr';
   import { get } from 'svelte/store';
-  import { activeClass, kernelSize, addLabel } from './stores/classifier';
+  import { activeClass, classes, kernelSize, addLabel, isClassified } from './stores/classifier';
   import { activeTool } from './stores/tools';
 
   let mapContainer: HTMLDivElement;
@@ -43,6 +43,32 @@
     map.on('mousemove', (e) => {
       const coord = document.getElementById('coord-text');
       if (coord) coord.textContent = `${e.lngLat.lng.toFixed(4)}, ${e.lngLat.lat.toFixed(4)}`;
+
+      // Floating classification tooltip
+      const tip = document.getElementById('class-tooltip');
+      if (!tip) return;
+      if (get(isClassified)) {
+        const src = get(zarrSource);
+        const classId = src?.getClassificationAt(e.lngLat.lng, e.lngLat.lat) ?? null;
+
+        if (classId != null && classId >= 0) {
+          const cls = get(classes).find(c => c.id === classId);
+          if (cls) {
+            tip.innerHTML = `<span style="background:${cls.color}" class="inline-block w-2 h-2 rounded-sm"></span> ${cls.name}`;
+            tip.style.left = `${e.originalEvent.clientX + 12}px`;
+            tip.style.top = `${e.originalEvent.clientY - 10}px`;
+            tip.style.display = 'flex';
+            return;
+          }
+        } else if (classId === -1) {
+          tip.innerHTML = '<span class="inline-block w-2 h-2 rounded-sm bg-gray-500"></span> <i class="text-gray-500">uncertain</i>';
+          tip.style.left = `${e.originalEvent.clientX + 12}px`;
+          tip.style.top = `${e.originalEvent.clientY - 10}px`;
+          tip.style.display = 'flex';
+          return;
+        }
+      }
+      tip.style.display = 'none';
     });
 
     // Map click — dispatched based on active tool
@@ -128,4 +154,13 @@
             text-[10px] text-gray-500 font-mono px-2.5 py-1 rounded
             border border-gray-800/40 z-10 tabular-nums">
   <span id="coord-text">--</span>
+</div>
+
+<!-- Floating classification tooltip (follows mouse) -->
+<div id="class-tooltip"
+     class="fixed items-center gap-1.5 bg-black/85 backdrop-blur-sm
+            text-[11px] text-gray-200 font-mono px-2 py-1 rounded
+            border border-gray-700/50 z-50 pointer-events-none
+            shadow-lg shadow-black/40 whitespace-nowrap"
+     style="display: none">
 </div>

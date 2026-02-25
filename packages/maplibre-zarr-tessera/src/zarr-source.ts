@@ -27,6 +27,8 @@ export class ZarrTesseraSource {
   private listeners = new Map<string, Set<EventCallback<unknown>>>();
   /** Tracks active loading animations per chunk key → animation frame ID. */
   private loadingAnimations = new Map<string, number>();
+  /** Per-pixel class ID maps from classification, keyed by chunk key. */
+  private classificationMaps = new Map<string, { width: number; height: number; classMap: Int16Array }>();
 
   constructor(options: ZarrTesseraOptions) {
     this.opts = {
@@ -100,6 +102,7 @@ export class ZarrTesseraSource {
     this.loadingAnimations.clear();
     for (const [key] of this.chunkCache) this.removeChunkFromMap(key);
     this.embeddingCache.clear();
+    this.classificationMaps.clear();
     this.chunkCache.clear();
     this.removeOverlays();
     this.workerPool?.terminate();
@@ -392,6 +395,23 @@ export class ZarrTesseraSource {
     return results;
   }
 
+  /** Compute the bounding box (in WGS84) of all loaded embedding tiles.
+   *  Returns [south, west, north, east] or null if no embeddings loaded. */
+  embeddingBoundsLngLat(): [number, number, number, number] | null {
+    if (this.embeddingCache.size === 0) return null;
+    let south = 90, west = 180, north = -90, east = -180;
+    for (const [, tile] of this.embeddingCache) {
+      const corners = this.chunkCorners(tile.ci, tile.cj);
+      for (const [lng, lat] of corners) {
+        if (lat < south) south = lat;
+        if (lat > north) north = lat;
+        if (lng < west) west = lng;
+        if (lng > east) east = lng;
+      }
+    }
+    return [south, west, north, east];
+  }
+
   /** Add or update a classification RGBA canvas as a map layer for a chunk.
    *  Called repeatedly during incremental classification — updates in-place
    *  if the source already exists. */
@@ -431,6 +451,39 @@ export class ZarrTesseraSource {
     }
   }
 
+  /** Store a per-pixel class ID map for a classified chunk. */
+  setClassificationMap(ci: number, cj: number, classMap: Int16Array, width: number, height: number): void {
+    this.classificationMaps.set(this.chunkKey(ci, cj), { width, height, classMap });
+  }
+
+  /** Look up the classification class ID at a map coordinate.
+   *  Returns the class ID (>= 0), -1 for uncertain, -2 for nodata, or null if
+   *  no classification exists at that location. */
+  getClassificationAt(lng: number, lat: number): number | null {
+    if (!this.store || !this.proj) return null;
+    const [e, n] = this.proj.forward(lng, lat);
+    const t = this.store.meta.transform;
+    const px = t[0], originE = t[2], originN = t[5];
+    const cs = this.store.meta.chunkShape;
+    const s = this.store.meta.shape;
+
+    const globalCol = Math.floor((e - originE) / px);
+    const globalRow = Math.floor((originN - n) / px);
+    if (globalCol < 0 || globalCol >= s[1] || globalRow < 0 || globalRow >= s[0]) return null;
+
+    const ci = Math.floor(globalRow / cs[0]);
+    const cj = Math.floor(globalCol / cs[1]);
+    const key = this.chunkKey(ci, cj);
+    const entry = this.classificationMaps.get(key);
+    if (!entry) return null;
+
+    const row = globalRow - ci * cs[0];
+    const col = globalCol - cj * cs[1];
+    if (row < 0 || row >= entry.height || col < 0 || col >= entry.width) return null;
+
+    return entry.classMap[row * entry.width + col];
+  }
+
   /** Remove all classification overlays from the map. */
   clearClassificationOverlays(): void {
     if (!this.map) return;
@@ -442,6 +495,7 @@ export class ZarrTesseraSource {
       const srcId = layer.id.replace('zarr-class-lyr-', 'zarr-class-src-');
       if (this.map.getSource(srcId)) this.map.removeSource(srcId);
     }
+    this.classificationMaps.clear();
     this.debug('overlay', 'Cleared all classification overlays');
   }
 

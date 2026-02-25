@@ -6,8 +6,10 @@
     labelCounts, addClass, removeClass, clearLabels,
   } from '../stores/classifier';
   import { classifyTiles, type ClassifyProgress } from '../lib/classify';
+  import OsmImport from './OsmImport.svelte';
 
   let newClassName = $state('');
+  let osmExpanded = $state(false);
   let newClassColor = $state('#3b82f6');
   let isClassifying = $state(false);
   let classifyProgress = $state<ClassifyProgress | null>(null);
@@ -40,7 +42,7 @@
     try {
       source.clearClassificationOverlays();
       const opacity = $classificationOpacity;
-      await classifyTiles(
+      const results = await classifyTiles(
         source.embeddingCache,
         $labels,
         $classes,
@@ -52,6 +54,11 @@
           source.setClassificationOpacity(opacity);
         },
       );
+
+      // Store per-pixel class maps for hover lookup
+      for (const r of results) {
+        source.setClassificationMap(r.ci, r.cj, r.classMap, r.canvas.width, r.canvas.height);
+      }
 
       $isClassified = true;
     } finally {
@@ -131,6 +138,22 @@
   {/if}
 
   <div>
+    <button
+      onclick={() => osmExpanded = !osmExpanded}
+      class="flex items-center gap-1 w-full text-left text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+    >
+      <span class="text-[8px] transition-transform {osmExpanded ? 'rotate-90' : ''}"
+            style="display:inline-block">&#9654;</span>
+      Import from OSM
+    </button>
+    {#if osmExpanded}
+      <div class="mt-1.5 pl-1 border-l border-gray-800/60">
+        <OsmImport />
+      </div>
+    {/if}
+  </div>
+
+  <div>
     <span class="text-gray-600 text-[10px]">Kernel</span>
     <div class="flex gap-1 mt-1">
       {#each [1, 3, 5, 7, 9] as size}
@@ -168,6 +191,7 @@
              class="flex-1 h-1" />
       <span class="text-gray-500 text-[10px] tabular-nums w-8 text-right">{$classificationOpacity.toFixed(2)}</span>
     </div>
+
   {/if}
 
   <div class="space-y-1.5">

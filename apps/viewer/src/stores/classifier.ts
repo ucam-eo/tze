@@ -86,6 +86,60 @@ export function clearLabels(): void {
   isClassified.set(false);
 }
 
+export function importOsmLabels(
+  newClasses: Array<{ name: string; color: string }>,
+  newLabels: Map<string, Array<{ lngLat: [number, number]; embeddingAt: EmbeddingAt }>>,
+): { classesCreated: number; labelsImported: number } {
+  let classesCreated = 0;
+  let labelsImported = 0;
+  const currentClasses = get(classes);
+
+  // Map class name → ClassDef (reuse existing or create new)
+  const classMap = new Map<string, ClassDef>();
+  for (const cls of currentClasses) {
+    classMap.set(cls.name, cls);
+  }
+
+  const toAddClasses: ClassDef[] = [];
+  for (const { name, color } of newClasses) {
+    if (!classMap.has(name)) {
+      const def: ClassDef = { name, color, id: nextClassId++ };
+      classMap.set(name, def);
+      toAddClasses.push(def);
+      classesCreated++;
+    }
+  }
+
+  if (toAddClasses.length > 0) {
+    classes.update(cs => [...cs, ...toAddClasses]);
+  }
+
+  // Bulk-append all label points
+  const toAddLabels: LabelPoint[] = [];
+  for (const [className, points] of newLabels) {
+    const cls = classMap.get(className);
+    if (!cls) continue;
+    for (const { lngLat, embeddingAt } of points) {
+      toAddLabels.push({
+        lngLat,
+        ci: embeddingAt.ci,
+        cj: embeddingAt.cj,
+        row: embeddingAt.row,
+        col: embeddingAt.col,
+        classId: cls.id,
+        embedding: embeddingAt.embedding,
+      });
+      labelsImported++;
+    }
+  }
+
+  if (toAddLabels.length > 0) {
+    labels.update(ls => [...ls, ...toAddLabels]);
+  }
+
+  return { classesCreated, labelsImported };
+}
+
 export function exportLabelsJson(): string {
   const cs = get(classes);
   const ls = get(labels);

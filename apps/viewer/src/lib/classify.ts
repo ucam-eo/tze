@@ -7,6 +7,8 @@ export interface ClassificationResult {
   ci: number;
   cj: number;
   canvas: HTMLCanvasElement;
+  /** Per-pixel class ID map (width*height). -1 = unclassified/uncertain, -2 = nodata. */
+  classMap: Int16Array;
   stats: { total: number; classified: number; uncertain: number };
 }
 
@@ -99,6 +101,7 @@ export async function classifyTiles(
   for (const [, tile] of embeddingCache) {
     const { ci, cj, emb, scales, width, height, nBands } = tile;
     const rgba = new Uint8ClampedArray(width * height * 4);
+    const classMap = new Int16Array(width * height).fill(-2); // -2 = nodata
     let classified = 0;
     let uncertain = 0;
     let total = 0;
@@ -171,12 +174,14 @@ export async function classifyTiles(
           rgba[rgbaIdx + 1] = color[1];
           rgba[rgbaIdx + 2] = color[2];
           rgba[rgbaIdx + 3] = 200;
+          classMap[pixelIdx] = bestLabel;
           classified++;
         } else {
           rgba[rgbaIdx] = 128;
           rgba[rgbaIdx + 1] = 128;
           rgba[rgbaIdx + 2] = 128;
           rgba[rgbaIdx + 3] = 80;
+          classMap[pixelIdx] = -1; // uncertain
           uncertain++;
         }
       }
@@ -198,7 +203,7 @@ export async function classifyTiles(
       await new Promise(r => setTimeout(r, 0));
     }
 
-    results.push({ ci, cj, canvas, stats: { total, classified, uncertain } });
+    results.push({ ci, cj, canvas, classMap, stats: { total, classified, uncertain } });
     tilesDone++;
     onProgress?.({ tilesDone, tilesTotal, pixelsDone, pixelsTotal: totalValidPixels });
   }
