@@ -37,7 +37,7 @@
 </script>
 
 <div class="px-4 py-3 border-b border-gray-800/60">
-  <label class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Basemap</label>
+  <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Basemap</span>
   <div class="mt-2 flex gap-1">
     {#each BASEMAPS as bm}
       <button

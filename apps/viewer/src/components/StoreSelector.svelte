@@ -53,7 +53,7 @@
 </script>
 
 <div class="px-4 py-3 border-b border-gray-800/60">
-  <label class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Store URL</label>
+  <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Store URL</span>
   <div class="flex gap-1.5 mt-1.5">
     <input
       type="text"

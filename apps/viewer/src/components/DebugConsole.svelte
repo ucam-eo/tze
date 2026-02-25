@@ -4,7 +4,7 @@
 
   let logs = $state<DebugLogEntry[]>([]);
   let expanded = $state(true);
-  let logContainer: HTMLDivElement;
+  let logContainer = $state<HTMLDivElement>(undefined!);
 
   const MAX_LOGS = 200;
 

@@ -28,7 +28,7 @@
 <div class="px-4 py-3 border-b border-gray-800/60 transition-opacity"
      class:opacity-40={!enabled} class:pointer-events-none={!enabled}>
   <div class="flex items-center justify-between">
-    <label class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Opacity</label>
+    <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Opacity</span>
     <span class="text-term-cyan/70 tabular-nums text-[11px]">{$opacity.toFixed(2)}</span>
   </div>
   <input type="range" min="0" max="100" value={Math.round($opacity * 100)}
@@ -39,7 +39,7 @@
 <!-- Preview mode -->
 {#if $metadata?.hasRgb || $metadata?.hasPca}
   <div class="px-4 py-3 border-b border-gray-800/60">
-    <label class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Preview</label>
+    <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Preview</span>
     <div class="mt-2 flex gap-1.5">
       {#if $metadata?.hasRgb}
         <button onclick={() => setPreview('rgb')}
@@ -62,7 +62,7 @@
 <!-- Overlays -->
 <div class="px-4 py-3 border-b border-gray-800/60 transition-opacity"
      class:opacity-40={!enabled} class:pointer-events-none={!enabled}>
-  <label class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Overlays</label>
+  <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Overlays</span>
   <div class="mt-2 space-y-1.5">
     <label class="flex items-center gap-2 cursor-pointer group">
       <input type="checkbox" checked={$gridVisible} onchange={toggleGrid}

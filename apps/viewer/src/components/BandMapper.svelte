@@ -15,7 +15,7 @@
 
 <div class="px-4 py-3 border-b border-gray-800/60 transition-opacity"
      class:opacity-40={!enabled} class:pointer-events-none={!enabled}>
-  <label class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Band Mapping</label>
+  <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Band Mapping</span>
   <div class="mt-2 space-y-2">
     <div class="flex items-center gap-2">
       <span class="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold
