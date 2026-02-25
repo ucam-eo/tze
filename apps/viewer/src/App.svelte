@@ -4,17 +4,19 @@
   import { mapInstance } from './stores/map';
   import StoreSelector from './components/StoreSelector.svelte';
   import LayerSwitcher from './components/LayerSwitcher.svelte';
-  import BandMapper from './components/BandMapper.svelte';
   import ControlPanel from './components/ControlPanel.svelte';
   import InfoPanel from './components/InfoPanel.svelte';
   import DebugConsole from './components/DebugConsole.svelte';
-  import LabelPanel from './components/LabelPanel.svelte';
+  import ToolSwitcher from './components/ToolSwitcher.svelte';
+  import type SimilaritySearch from './components/SimilaritySearch.svelte';
   import { zarrSource } from './stores/zarr';
   import { get } from 'svelte/store';
   import { activeClass, kernelSize, addLabel } from './stores/classifier';
+  import { activeTool } from './stores/tools';
 
   let mapContainer: HTMLDivElement;
   let labelMarkers: maplibregl.Marker[] = [];
+  let similarityRef: SimilaritySearch | undefined = $state();
 
   onMount(() => {
     const map = new maplibregl.Map({
@@ -43,30 +45,40 @@
       if (coord) coord.textContent = `${e.lngLat.lng.toFixed(4)}, ${e.lngLat.lat.toFixed(4)}`;
     });
 
-    // Map click for labeling
+    // Map click — dispatched based on active tool
     // NOTE: use get() to read stores inside imperative callbacks —
     // the $ prefix only works in Svelte's reactive context.
     map.on('click', (e) => {
+      const tool = get(activeTool);
       const src = get(zarrSource);
-      const cls = get(activeClass);
-      if (!src || !cls) return;
+      if (!src) return;
 
-      const ks = get(kernelSize);
-      const embeddings = src.getEmbeddingsInKernel(e.lngLat.lng, e.lngLat.lat, ks);
-      if (embeddings.length === 0) return;
-
-      for (const emb of embeddings) {
-        addLabel([e.lngLat.lng, e.lngLat.lat], emb, cls.id);
+      if (tool === 'similarity') {
+        similarityRef?.handleClick(e.lngLat.lng, e.lngLat.lat);
+        return;
       }
 
-      // Add visual marker at click location
-      const marker = new maplibregl.Marker({
-        color: cls.color,
-        scale: 0.5,
-      })
-        .setLngLat(e.lngLat)
-        .addTo(map);
-      labelMarkers.push(marker);
+      if (tool === 'classifier') {
+        const cls = get(activeClass);
+        if (!cls) return;
+
+        const ks = get(kernelSize);
+        const embeddings = src.getEmbeddingsInKernel(e.lngLat.lng, e.lngLat.lat, ks);
+        if (embeddings.length === 0) return;
+
+        for (const emb of embeddings) {
+          addLabel([e.lngLat.lng, e.lngLat.lat], emb, cls.id);
+        }
+
+        // Add visual marker at click location
+        const marker = new maplibregl.Marker({
+          color: cls.color,
+          scale: 0.5,
+        })
+          .setLngLat(e.lngLat)
+          .addTo(map);
+        labelMarkers.push(marker);
+      }
     });
 
     return () => { map.remove(); $mapInstance = null; };
@@ -76,7 +88,13 @@
     const map = $mapInstance;
     if (!map) return;
     const canvas = map.getCanvasContainer();
-    canvas.style.cursor = $activeClass ? 'crosshair' : '';
+    if ($activeTool === 'similarity') {
+      canvas.style.cursor = 'crosshair';
+    } else if ($activeTool === 'classifier' && $activeClass) {
+      canvas.style.cursor = 'crosshair';
+    } else {
+      canvas.style.cursor = '';
+    }
   });
 </script>
 
@@ -97,9 +115,8 @@
 
   <StoreSelector />
   <LayerSwitcher />
-  <BandMapper />
   <ControlPanel />
-  <LabelPanel />
+  <ToolSwitcher bind:similarityRef={similarityRef} />
   <InfoPanel />
 </div>
 

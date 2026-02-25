@@ -25,6 +25,8 @@ export class ZarrTesseraSource {
   public embeddingCache = new Map<string, TileEmbeddings>();
   private moveHandler: (() => void) | null = null;
   private listeners = new Map<string, Set<EventCallback<unknown>>>();
+  /** Tracks active loading animations per chunk key → animation frame ID. */
+  private loadingAnimations = new Map<string, number>();
 
   constructor(options: ZarrTesseraOptions) {
     this.opts = {
@@ -94,6 +96,8 @@ export class ZarrTesseraSource {
       this.map.off('moveend', this.moveHandler);
     }
     this.currentAbort?.abort();
+    for (const [, frameId] of this.loadingAnimations) cancelAnimationFrame(frameId);
+    this.loadingAnimations.clear();
     for (const [key] of this.chunkCache) this.removeChunkFromMap(key);
     this.embeddingCache.clear();
     this.chunkCache.clear();
@@ -115,9 +119,13 @@ export class ZarrTesseraSource {
 
   setOpacity(opacity: number): void {
     this.opts.opacity = opacity;
-    for (const [, entry] of this.chunkCache) {
-      if (entry.layerId && this.map?.getLayer(entry.layerId)) {
-        this.map.setPaintProperty(entry.layerId, 'raster-opacity', opacity);
+    if (!this.map) return;
+    // Update ALL chunk raster layers on the map (preview + embedding)
+    const style = this.map.getStyle();
+    if (!style?.layers) return;
+    for (const layer of style.layers) {
+      if (layer.id.startsWith('zarr-chunk-lyr-')) {
+        this.map.setPaintProperty(layer.id, 'raster-opacity', opacity);
       }
     }
   }
@@ -175,12 +183,16 @@ export class ZarrTesseraSource {
     const key = this.chunkKey(ci, cj);
     this.clickedChunks.add(key);
 
+    // Start loading animation over the preview tile
+    this.startLoadingAnimation(ci, cj);
+
     try {
       const { r0, r1, c0, c1 } = this.chunkPixelBounds(ci, cj);
       const h = r1 - r0;
       const w = c1 - c0;
       const nBands = this.store.meta.nBands;
       const expectedBytes = w * h * nBands;
+
       this.debug('fetch', `Loading embeddings (${ci},${cj}): ${w}x${h}x${nBands} = ${(expectedBytes / 1024).toFixed(0)} KB`);
       this.emit('embedding-progress', { ci, cj, stage: 'fetching', bytes: expectedBytes });
 
@@ -232,8 +244,10 @@ export class ZarrTesseraSource {
 
       this.debug('render', `Embedding render (${ci},${cj}): ${nValid} valid pixels`);
 
-      const entry = this.chunkCache.get(key);
-      if (entry?.sourceId) this.removeChunkFromMap(key);
+      // Stop animation and remove preview before adding embedding layer
+      this.stopLoadingAnimation(ci, cj);
+      const existing = this.chunkCache.get(key);
+      if (existing?.sourceId) this.removeChunkFromMap(key);
 
       let canvas: HTMLCanvasElement | null = null;
       let sourceId: string | null = null;
@@ -269,6 +283,7 @@ export class ZarrTesseraSource {
       // Update embedding highlight border on map
       this.updateEmbeddingHighlights();
     } catch (err) {
+      this.stopLoadingAnimation(ci, cj);
       this.debug('error', `Embedding load (${ci},${cj}) failed: ${(err as Error).message}`);
       this.emit('embedding-progress', { ci, cj, stage: 'done', bytes: 0 });
       console.error(`loadFullChunk(${ci},${cj}) failed:`, err);
@@ -393,7 +408,11 @@ export class ZarrTesseraSource {
 
     if (existingSource?.updateImage) {
       // Update existing image source in-place (fast path for incremental updates)
-      existingSource.updateImage({ url: dataUrl, coordinates: corners });
+      try {
+        existingSource.updateImage({ url: dataUrl, coordinates: corners });
+      } catch {
+        // Source may have been removed (AbortError) — ignore
+      }
     } else {
       // First time — create source and layer
       if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
@@ -607,15 +626,118 @@ export class ZarrTesseraSource {
     return { sourceId, layerId };
   }
 
+  /** Start a scanning animation overlay on a tile while embeddings load. */
+  private startLoadingAnimation(ci: number, cj: number): void {
+    if (!this.map) return;
+    const key = this.chunkKey(ci, cj);
+
+    // Stop any existing animation for this tile
+    if (this.loadingAnimations.has(key)) {
+      cancelAnimationFrame(this.loadingAnimations.get(key)!);
+    }
+
+    const sourceId = `zarr-load-src-${key}`;
+    const layerId = `zarr-load-lyr-${key}`;
+    const corners = this.chunkCorners(ci, cj);
+    const { r0, r1, c0, c1 } = this.chunkPixelBounds(ci, cj);
+    const h = r1 - r0;
+    const w = c1 - c0;
+
+    // Create the scan canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+
+    const renderFrame = (canvas: HTMLCanvasElement, t: number) => {
+      const ctx = canvas.getContext('2d')!;
+      ctx.clearRect(0, 0, w, h);
+
+      // Sweeping scanline band — cyan glow moving top-to-bottom
+      const cycle = 3000; // ms per full sweep
+      const phase = (t % cycle) / cycle;
+      const scanY = phase * h;
+      const bandHeight = h * 0.15;
+
+      // Draw the scan band with gaussian-ish falloff
+      for (let dy = -bandHeight; dy <= bandHeight; dy++) {
+        const y = Math.round(scanY + dy);
+        if (y < 0 || y >= h) continue;
+        const intensity = Math.exp(-(dy * dy) / (2 * (bandHeight * 0.3) ** 2));
+        ctx.fillStyle = `rgba(0, 229, 255, ${0.35 * intensity})`;
+        ctx.fillRect(0, y, w, 1);
+      }
+
+      // Subtle overall pulse
+      const pulse = 0.04 + 0.03 * Math.sin(t / 800);
+      ctx.fillStyle = `rgba(0, 229, 255, ${pulse})`;
+      ctx.fillRect(0, 0, w, h);
+
+      // Horizontal scan lines for texture (every 4px)
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.03)';
+      for (let y = 0; y < h; y += 4) {
+        ctx.fillRect(0, y, w, 1);
+      }
+    };
+
+    // Initial frame
+    renderFrame(canvas, performance.now());
+    const dataUrl = canvas.toDataURL('image/png');
+
+    if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
+    if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+
+    this.map.addSource(sourceId, {
+      type: 'image', url: dataUrl, coordinates: corners,
+    });
+    this.map.addLayer({
+      id: layerId, type: 'raster', source: sourceId,
+      paint: { 'raster-opacity': 1, 'raster-fade-duration': 0 },
+    });
+    this.raiseOverlayLayers();
+
+    // Animation loop
+    const animate = (t: number) => {
+      if (!this.map || !this.map.getSource(sourceId)) return;
+      renderFrame(canvas, t);
+      const url = canvas.toDataURL('image/png');
+      const src = this.map.getSource(sourceId) as
+        { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => void } | undefined;
+      src?.updateImage?.({ url, coordinates: corners });
+      this.loadingAnimations.set(key, requestAnimationFrame(animate));
+    };
+    this.loadingAnimations.set(key, requestAnimationFrame(animate));
+  }
+
+  /** Stop and remove loading animation for a tile. */
+  private stopLoadingAnimation(ci: number, cj: number): void {
+    if (!this.map) return;
+    const key = this.chunkKey(ci, cj);
+    const frameId = this.loadingAnimations.get(key);
+    if (frameId != null) {
+      cancelAnimationFrame(frameId);
+      this.loadingAnimations.delete(key);
+    }
+    const layerId = `zarr-load-lyr-${key}`;
+    const sourceId = `zarr-load-src-${key}`;
+    if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
+    if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+  }
+
   /** Ensure overlay layers stay above chunk data layers.
-   *  Order (bottom→top): chunk data, grid fills, classification, emb-highlight, grid lines, UTM */
+   *  Order (bottom→top): chunk data, grid fills, loading anim, classification, emb-highlight, grid lines, UTM */
   private raiseOverlayLayers(): void {
     const style = this.map!.getStyle();
     if (!style?.layers) return;
-    // Grid fills go above chunk data but below classification
+    // Grid fills go above chunk data but below loading/classification
     if (this.map!.getLayer('chunk-grid-nodata')) this.map!.moveLayer('chunk-grid-nodata');
     if (this.map!.getLayer('chunk-grid-data')) this.map!.moveLayer('chunk-grid-data');
-    // Classification overlays go above grid fills
+    // Loading animation overlays above grid fills
+    for (const layer of style.layers) {
+      if (layer.id.startsWith('zarr-load-lyr-')) {
+        this.map!.moveLayer(layer.id);
+      }
+    }
+    // Classification overlays above loading
     for (const layer of style.layers) {
       if (layer.id.startsWith('zarr-class-lyr-')) {
         this.map!.moveLayer(layer.id);
