@@ -171,75 +171,108 @@ export class ZarrTesseraSource {
 
   /** Load full embedding data for a specific chunk (for band exploration). */
   async loadFullChunk(ci: number, cj: number): Promise<void> {
-    if (!this.store || !this.workerPool || !this.map) return;
+    if (!this.store || !this.map) return;
     const key = this.chunkKey(ci, cj);
     this.clickedChunks.add(key);
 
-    const { r0, r1, c0, c1 } = this.chunkPixelBounds(ci, cj);
-    const h = r1 - r0;
-    const w = c1 - c0;
-    const nBands = this.store.meta.nBands;
-    const expectedBytes = w * h * nBands;
-    this.debug('fetch', `Loading embeddings (${ci},${cj}): ${w}x${h}x${nBands} = ${(expectedBytes / 1024).toFixed(0)} KB`);
-    this.emit('embedding-progress', { ci, cj, stage: 'fetching', bytes: expectedBytes });
+    try {
+      const { r0, r1, c0, c1 } = this.chunkPixelBounds(ci, cj);
+      const h = r1 - r0;
+      const w = c1 - c0;
+      const nBands = this.store.meta.nBands;
+      const expectedBytes = w * h * nBands;
+      this.debug('fetch', `Loading embeddings (${ci},${cj}): ${w}x${h}x${nBands} = ${(expectedBytes / 1024).toFixed(0)} KB`);
+      this.emit('embedding-progress', { ci, cj, stage: 'fetching', bytes: expectedBytes });
 
-    const [embView, scalesView] = await Promise.all([
-      fetchRegion(this.store.embArr, [[r0, r1], [c0, c1], null]),
-      fetchRegion(this.store.scalesArr, [[r0, r1], [c0, c1]]),
-    ]);
-    this.debug('fetch', `Embeddings fetched (${ci},${cj}), rendering...`);
-    this.emit('embedding-progress', { ci, cj, stage: 'rendering', bytes: expectedBytes });
+      const [embView, scalesView] = await Promise.all([
+        fetchRegion(this.store.embArr, [[r0, r1], [c0, c1], null]),
+        fetchRegion(this.store.scalesArr, [[r0, r1], [c0, c1]]),
+      ]);
+      this.debug('fetch', `Embeddings fetched (${ci},${cj}), rendering...`);
+      this.emit('embedding-progress', { ci, cj, stage: 'rendering', bytes: expectedBytes });
 
-    const embBuf = new Int8Array(
-      embView.data.buffer, embView.data.byteOffset, embView.data.byteLength,
-    ).slice().buffer;
-    const scalesBuf = new Uint8Array(
-      new Float32Array(scalesView.data.buffer, scalesView.data.byteOffset, scalesView.data.byteLength).buffer,
-    ).slice().buffer;
+      // Copy the raw data out of zarrita's views into independent buffers.
+      // embView.data is Int8Array (1 byte/elem), scalesView.data is Float32Array (4 bytes/elem).
+      const embInt8 = new Int8Array(embView.data.buffer, embView.data.byteOffset,
+        embView.data.byteLength).slice();
+      // Reinterpret scales bytes as Float32 — create a fresh copy via Uint8Array round-trip
+      const scalesCopy = new Uint8Array(scalesView.data.buffer, scalesView.data.byteOffset,
+        scalesView.data.byteLength).slice();
+      const scalesF32 = new Float32Array(scalesCopy.buffer);
 
-    const result = await this.workerPool.dispatch({
-      type: 'render-emb', embRaw: embBuf, scalesRaw: scalesBuf,
-      width: w, height: h, nBands, bands: this.opts.bands,
-    }, [embBuf, scalesBuf]);
+      // Render inline on main thread — avoids worker pool queue contention
+      // which caused the "rendering" phase to hang behind regular chunk loads.
+      const [bR, bG, bB] = this.opts.bands;
+      let minR = 127, maxR = -128, minG = 127, maxG = -128, minB = 127, maxB = -128;
+      let nValid = 0;
+      for (let i = 0; i < w * h; i++) {
+        if (isNaN(scalesF32[i]) || scalesF32[i] === 0) continue;
+        const base = i * nBands;
+        const vr = embInt8[base + bR], vg = embInt8[base + bG], vb = embInt8[base + bB];
+        if (vr < minR) minR = vr; if (vr > maxR) maxR = vr;
+        if (vg < minG) minG = vg; if (vg > maxG) maxG = vg;
+        if (vb < minB) minB = vb; if (vb > maxB) maxB = vb;
+        nValid++;
+      }
 
-    const entry = this.chunkCache.get(key);
-    if (entry?.sourceId) this.removeChunkFromMap(key);
+      const rgba = new Uint8Array(w * h * 4);
+      if (nValid > 0 && !(maxR === minR && maxG === minG && maxB === minB)) {
+        const rangeR = maxR - minR || 1, rangeG = maxG - minG || 1, rangeB = maxB - minB || 1;
+        for (let i = 0; i < w * h; i++) {
+          const pi = i * 4;
+          const scale = scalesF32[i];
+          if (isNaN(scale) || scale === 0) { rgba[pi + 3] = 0; continue; }
+          const base = i * nBands;
+          rgba[pi]     = Math.max(0, Math.min(255, ((embInt8[base + bR] - minR) / rangeR) * 255));
+          rgba[pi + 1] = Math.max(0, Math.min(255, ((embInt8[base + bG] - minG) / rangeG) * 255));
+          rgba[pi + 2] = Math.max(0, Math.min(255, ((embInt8[base + bB] - minB) / rangeB) * 255));
+          rgba[pi + 3] = 255;
+        }
+      }
 
-    let canvas: HTMLCanvasElement | null = null;
-    let sourceId: string | null = null;
-    let layerId: string | null = null;
+      this.debug('render', `Embedding render (${ci},${cj}): ${nValid} valid pixels`);
 
-    if ((result.nValid as number) > 0) {
-      canvas = this.rgbaToCanvas(result.rgba as ArrayBuffer, w, h);
-      ({ sourceId, layerId } = this.addChunkToMap(ci, cj, canvas));
+      const entry = this.chunkCache.get(key);
+      if (entry?.sourceId) this.removeChunkFromMap(key);
+
+      let canvas: HTMLCanvasElement | null = null;
+      let sourceId: string | null = null;
+      let layerId: string | null = null;
+
+      if (nValid > 0) {
+        canvas = this.rgbaToCanvas(rgba.buffer, w, h);
+        ({ sourceId, layerId } = this.addChunkToMap(ci, cj, canvas));
+      }
+
+      const embU8 = new Uint8Array(embInt8.buffer);
+      const scalesU8 = new Uint8Array(scalesF32.buffer);
+
+      this.chunkCache.set(key, {
+        ci, cj,
+        embRaw: embU8,
+        scalesRaw: scalesU8,
+        canvas, sourceId, layerId, isPreview: false,
+      });
+
+      // Store typed views for classification
+      this.embeddingCache.set(key, {
+        ci, cj,
+        emb: embInt8,
+        scales: scalesF32,
+        width: w, height: h,
+        nBands,
+      });
+      this.debug('info', `Embeddings ready (${ci},${cj}): ${(embInt8.byteLength / 1024).toFixed(0)} KB cached`);
+      this.emit('embedding-progress', { ci, cj, stage: 'done', bytes: embInt8.byteLength });
+      this.emit('embeddings-loaded', { ci, cj });
+
+      // Update embedding highlight border on map
+      this.updateEmbeddingHighlights();
+    } catch (err) {
+      this.debug('error', `Embedding load (${ci},${cj}) failed: ${(err as Error).message}`);
+      this.emit('embedding-progress', { ci, cj, stage: 'done', bytes: 0 });
+      console.error(`loadFullChunk(${ci},${cj}) failed:`, err);
     }
-
-    const returnedEmb = result.embRaw as ArrayBuffer;
-    const returnedScales = result.scalesRaw as ArrayBuffer;
-    const embU8 = new Uint8Array(returnedEmb);
-    const scalesU8 = new Uint8Array(returnedScales);
-
-    this.chunkCache.set(key, {
-      ci, cj,
-      embRaw: embU8,
-      scalesRaw: scalesU8,
-      canvas, sourceId, layerId, isPreview: false,
-    });
-
-    // Store typed views for classification
-    this.embeddingCache.set(key, {
-      ci, cj,
-      emb: new Int8Array(returnedEmb),
-      scales: new Float32Array(returnedScales),
-      width: w, height: h,
-      nBands,
-    });
-    this.debug('info', `Embeddings ready (${ci},${cj}): ${(returnedEmb.byteLength / 1024).toFixed(0)} KB cached`);
-    this.emit('embedding-progress', { ci, cj, stage: 'done', bytes: returnedEmb.byteLength });
-    this.emit('embeddings-loaded', { ci, cj });
-
-    // Update embedding highlight border on map
-    this.updateEmbeddingHighlights();
   }
 
   /** Given a map coordinate, return the chunk indices containing that point, or null. */
@@ -344,7 +377,9 @@ export class ZarrTesseraSource {
     return results;
   }
 
-  /** Add a classification RGBA canvas as a map layer for a chunk. */
+  /** Add or update a classification RGBA canvas as a map layer for a chunk.
+   *  Called repeatedly during incremental classification — updates in-place
+   *  if the source already exists. */
   addClassificationOverlay(ci: number, cj: number, canvas: HTMLCanvasElement): void {
     if (!this.map) return;
     const key = this.chunkKey(ci, cj);
@@ -353,20 +388,28 @@ export class ZarrTesseraSource {
     const corners = this.chunkCorners(ci, cj);
     const dataUrl = canvas.toDataURL('image/png');
 
-    if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
-    if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+    const existingSource = this.map.getSource(sourceId) as
+      { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => void } | undefined;
 
-    this.map.addSource(sourceId, {
-      type: 'image', url: dataUrl, coordinates: corners,
-    });
-    this.map.addLayer({
-      id: layerId, type: 'raster', source: sourceId,
-      paint: { 'raster-opacity': 0.7, 'raster-fade-duration': 0 },
-    });
+    if (existingSource?.updateImage) {
+      // Update existing image source in-place (fast path for incremental updates)
+      existingSource.updateImage({ url: dataUrl, coordinates: corners });
+    } else {
+      // First time — create source and layer
+      if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
+      if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
 
-    if (this.map.getLayer('chunk-grid-lines')) this.map.moveLayer('chunk-grid-lines');
-    if (this.map.getLayer('utm-zone-line')) this.map.moveLayer('utm-zone-line');
-    this.debug('overlay', `Classification overlay added for chunk (${ci},${cj})`);
+      this.map.addSource(sourceId, {
+        type: 'image', url: dataUrl, coordinates: corners,
+      });
+      this.map.addLayer({
+        id: layerId, type: 'raster', source: sourceId,
+        paint: { 'raster-opacity': 0.7, 'raster-fade-duration': 0 },
+      });
+
+      this.raiseOverlayLayers();
+      this.debug('overlay', `Classification overlay added for chunk (${ci},${cj})`);
+    }
   }
 
   /** Remove all classification overlays from the map. */
@@ -433,10 +476,7 @@ export class ZarrTesseraSource {
       });
     }
 
-    // Keep on top of data layers
-    if (this.map.getLayer('chunk-grid-lines')) this.map.moveLayer('chunk-grid-lines');
-    if (this.map.getLayer(layerId)) this.map.moveLayer(layerId);
-    if (this.map.getLayer('utm-zone-line')) this.map.moveLayer('utm-zone-line');
+    this.raiseOverlayLayers();
   }
 
   on<K extends keyof ZarrTesseraEvents>(
@@ -563,11 +603,28 @@ export class ZarrTesseraSource {
       paint: { 'raster-opacity': this.opts.opacity, 'raster-fade-duration': 0 },
     });
 
-    // Keep overlays on top
+    this.raiseOverlayLayers();
+    return { sourceId, layerId };
+  }
+
+  /** Ensure overlay layers stay above chunk data layers.
+   *  Order (bottom→top): chunk data, grid fills, classification, emb-highlight, grid lines, UTM */
+  private raiseOverlayLayers(): void {
+    const style = this.map!.getStyle();
+    if (!style?.layers) return;
+    // Grid fills go above chunk data but below classification
+    if (this.map!.getLayer('chunk-grid-nodata')) this.map!.moveLayer('chunk-grid-nodata');
+    if (this.map!.getLayer('chunk-grid-data')) this.map!.moveLayer('chunk-grid-data');
+    // Classification overlays go above grid fills
+    for (const layer of style.layers) {
+      if (layer.id.startsWith('zarr-class-lyr-')) {
+        this.map!.moveLayer(layer.id);
+      }
+    }
+    // Highlight, grid lines, UTM on top
+    if (this.map!.getLayer('emb-highlight-line')) this.map!.moveLayer('emb-highlight-line');
     if (this.map!.getLayer('chunk-grid-lines')) this.map!.moveLayer('chunk-grid-lines');
     if (this.map!.getLayer('utm-zone-line')) this.map!.moveLayer('utm-zone-line');
-
-    return { sourceId, layerId };
   }
 
   private removeChunkFromMap(key: string): void {

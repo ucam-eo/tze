@@ -11,13 +11,26 @@ export interface ClassificationResult {
   stats: { total: number; classified: number; uncertain: number };
 }
 
-/** Classify all pixels in loaded tiles using KNN on labeled embeddings. */
+export interface ClassifyProgress {
+  tilesDone: number;
+  tilesTotal: number;
+  pixelsDone: number;
+  pixelsTotal: number;
+}
+
+/** Callback fired after each batch with the updated canvas for a tile. */
+export type OnBatchUpdate = (ci: number, cj: number, canvas: HTMLCanvasElement) => void;
+
+/** Classify all pixels in loaded tiles using KNN on labeled embeddings.
+ *  Fires `onBatchUpdate` after every batch so the map can update pixel-by-pixel. */
 export async function classifyTiles(
   embeddingCache: Map<string, TileEmbeddings>,
   labelPoints: LabelPoint[],
   classDefs: ClassDef[],
   k: number,
   confidenceThreshold: number,
+  onProgress?: (p: ClassifyProgress) => void,
+  onBatchUpdate?: OnBatchUpdate,
 ): Promise<ClassificationResult[]> {
   await tf.ready();
 
@@ -43,12 +56,33 @@ export async function classifyTiles(
 
   const results: ClassificationResult[] = [];
 
+  // Count total valid pixels across all tiles for progress
+  const tilesTotal = embeddingCache.size;
+  let tilesDone = 0;
+  let totalValidPixels = 0;
+  let pixelsDone = 0;
+
+  for (const [, tile] of embeddingCache) {
+    for (let i = 0; i < tile.width * tile.height; i++) {
+      const s = tile.scales[i];
+      if (s && !isNaN(s) && s !== 0) totalValidPixels++;
+    }
+  }
+
+  onProgress?.({ tilesDone: 0, tilesTotal, pixelsDone: 0, pixelsTotal: totalValidPixels });
+
   for (const [, tile] of embeddingCache) {
     const { ci, cj, emb, scales, width, height, nBands } = tile;
     const rgba = new Uint8ClampedArray(width * height * 4);
     let classified = 0;
     let uncertain = 0;
     let total = 0;
+
+    // Create a canvas that we update incrementally after each batch
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d')!;
 
     // Collect valid pixels
     const validIndices: number[] = [];
@@ -105,18 +139,22 @@ export async function classifyTiles(
           uncertain++;
         }
       }
+
+      // Update canvas with current state and push to map
+      const imgData = ctx.createImageData(width, height);
+      imgData.data.set(rgba);
+      ctx.putImageData(imgData, 0, 0);
+      onBatchUpdate?.(ci, cj, canvas);
+
+      // Report progress and yield to event loop so map repaints
+      pixelsDone += predictions.length;
+      onProgress?.({ tilesDone, tilesTotal, pixelsDone, pixelsTotal: totalValidPixels });
+      await new Promise(r => setTimeout(r, 0));
     }
 
-    // Create canvas
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d')!;
-    const imgData = ctx.createImageData(width, height);
-    imgData.data.set(rgba);
-    ctx.putImageData(imgData, 0, 0);
-
     results.push({ ci, cj, canvas, stats: { total, classified, uncertain } });
+    tilesDone++;
+    onProgress?.({ tilesDone, tilesTotal, pixelsDone, pixelsTotal: totalValidPixels });
   }
 
   classifier.dispose();

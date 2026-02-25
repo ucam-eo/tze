@@ -5,11 +5,12 @@
     kValue, confidenceThreshold, classificationOpacity, isClassified,
     labelCounts, addClass, removeClass, clearLabels,
   } from '../stores/classifier';
-  import { classifyTiles } from '../lib/classify';
+  import { classifyTiles, type ClassifyProgress } from '../lib/classify';
 
   let newClassName = $state('');
   let newClassColor = $state('#3b82f6');
   let isClassifying = $state(false);
+  let classifyProgress = $state<ClassifyProgress | null>(null);
   let expanded = $state(true);
 
   const enabled = $derived(!!$metadata);
@@ -36,24 +37,28 @@
     const source = $zarrSource;
     if (!source || isClassifying) return;
     isClassifying = true;
+    classifyProgress = null;
 
     try {
       source.clearClassificationOverlays();
-      const results = await classifyTiles(
+      const opacity = $classificationOpacity;
+      await classifyTiles(
         source.embeddingCache,
         $labels,
         $classes,
         $kValue,
         $confidenceThreshold,
+        (p) => { classifyProgress = p; },
+        (ci, cj, canvas) => {
+          source.addClassificationOverlay(ci, cj, canvas);
+          source.setClassificationOpacity(opacity);
+        },
       );
 
-      for (const r of results) {
-        source.addClassificationOverlay(r.ci, r.cj, r.canvas);
-      }
-      source.setClassificationOpacity($classificationOpacity);
       $isClassified = true;
     } finally {
       isClassifying = false;
+      classifyProgress = null;
     }
   }
 
@@ -180,22 +185,40 @@
         </div>
       {/if}
 
-      <div class="flex gap-1.5">
-        <button
-          onclick={runClassification}
-          disabled={!hasEnoughLabels() || isClassifying}
-          class="flex-1 bg-term-cyan/90 hover:bg-term-cyan text-black font-bold text-[10px]
-                 px-3 py-1.5 rounded tracking-wider transition-all
-                 hover:shadow-[0_0_12px_rgba(0,229,255,0.4)] active:scale-95
-                 disabled:opacity-40 disabled:pointer-events-none"
-        >
-          {isClassifying ? 'CLASSIFYING...' : 'CLASSIFY'}
-        </button>
-        <button
-          onclick={handleClear}
-          class="text-[10px] text-gray-500 hover:text-red-400 px-2 py-1.5 rounded
-                 border border-gray-700/60 hover:border-red-400/40 transition-all"
-        >CLEAR</button>
+      <div class="space-y-1.5">
+        <div class="flex gap-1.5">
+          <button
+            onclick={runClassification}
+            disabled={!hasEnoughLabels() || isClassifying}
+            class="flex-1 bg-term-cyan/90 hover:bg-term-cyan text-black font-bold text-[10px]
+                   px-3 py-1.5 rounded tracking-wider transition-all
+                   hover:shadow-[0_0_12px_rgba(0,229,255,0.4)] active:scale-95
+                   disabled:opacity-40 disabled:pointer-events-none"
+          >
+            {isClassifying ? 'CLASSIFYING...' : 'CLASSIFY'}
+          </button>
+          <button
+            onclick={handleClear}
+            class="text-[10px] text-gray-500 hover:text-red-400 px-2 py-1.5 rounded
+                   border border-gray-700/60 hover:border-red-400/40 transition-all"
+          >CLEAR</button>
+        </div>
+
+        {#if classifyProgress}
+          {@const pct = classifyProgress.pixelsTotal > 0
+            ? Math.round((classifyProgress.pixelsDone / classifyProgress.pixelsTotal) * 100)
+            : 0}
+          <div class="space-y-0.5">
+            <div class="flex justify-between text-[9px] text-gray-500 tabular-nums">
+              <span>Tile {classifyProgress.tilesDone}/{classifyProgress.tilesTotal}</span>
+              <span>{classifyProgress.pixelsDone.toLocaleString()} / {classifyProgress.pixelsTotal.toLocaleString()} px ({pct}%)</span>
+            </div>
+            <div class="h-1.5 bg-gray-900 rounded-full overflow-hidden">
+              <div class="h-full bg-term-cyan rounded-full transition-all duration-150"
+                   style="width: {pct}%"></div>
+            </div>
+          </div>
+        {/if}
       </div>
 
       <div class="text-[9px] text-gray-700 leading-relaxed">
