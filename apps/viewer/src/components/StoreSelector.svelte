@@ -1,100 +1,106 @@
 <script lang="ts">
-  import { ZarrTesseraSource } from '@ucam-eo/maplibre-zarr-tessera';
-  import { mapInstance } from '../stores/map';
+  import { onMount } from 'svelte';
+  import { loadCatalog } from '../lib/stac';
   import {
-    zarrSource, metadata, status, loading, bands, opacity, preview,
-    recentStores, addRecentStore,
-  } from '../stores/zarr';
+    catalogUrl, zones, activeZoneId, catalogStatus, catalogError, switchZone,
+  } from '../stores/stac';
+  import { status } from '../stores/zarr';
 
   let urlInput = $state('');
-  let isLoading = $state(false);
 
-  async function loadStore() {
-    const url = urlInput.trim().replace(/\/+$/, '');
-    if (!url || !$mapInstance) return;
+  onMount(() => {
+    urlInput = $catalogUrl;
+    fetchCatalog();
+  });
 
-    isLoading = true;
-    $status = 'Connecting...';
+  async function fetchCatalog() {
+    const url = urlInput.trim();
+    if (!url) return;
 
-    // Remove previous source
-    $zarrSource?.remove();
-    $zarrSource = null;
-    $metadata = null;
+    $catalogUrl = url;
+    $catalogStatus = 'loading';
+    $catalogError = '';
+    $zones = [];
+    $activeZoneId = null;
+    $status = 'Loading catalog...';
 
     try {
-      const source = new ZarrTesseraSource({
-        url,
-        bands: $bands,
-        opacity: $opacity,
-        preview: $preview,
-      });
-
-      source.on('metadata-loaded', (meta) => {
-        $metadata = meta;
-        $status = `Loaded: zone ${meta.utmZone}`;
-      });
-      source.on('loading', (progress) => { $loading = progress; });
-      source.on('error', (err) => { $status = `Error: ${err.message}`; });
-
-      await source.addTo($mapInstance);
-      $zarrSource = source;
-      addRecentStore(url);
+      const discovered = await loadCatalog(url);
+      $zones = discovered;
+      $catalogStatus = 'loaded';
+      $status = `${discovered.length} zones discovered`;
     } catch (err) {
-      $status = `Error: ${(err as Error).message}`;
-    } finally {
-      isLoading = false;
+      $catalogStatus = 'error';
+      $catalogError = (err as Error).message;
+      $status = `Catalog error: ${(err as Error).message}`;
     }
   }
 
-  function selectRecent(url: string) {
-    urlInput = url;
-    loadStore();
+  function handleZoneClick(zoneId: string) {
+    switchZone(zoneId);
   }
 </script>
 
 <div class="px-4 py-3 border-b border-gray-800/60">
-  <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Store URL</span>
+  <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">STAC Catalog</span>
   <div class="flex gap-1.5 mt-1.5">
     <input
       type="text"
       bind:value={urlInput}
-      placeholder="https://host/utm30_2025.zarr"
-      onkeydown={(e) => e.key === 'Enter' && loadStore()}
+      placeholder="https://host/catalog.json"
+      onkeydown={(e) => e.key === 'Enter' && fetchCatalog()}
       class="flex-1 bg-gray-950 border border-gray-700/60 rounded px-2 py-1.5
              text-gray-300 text-[11px] focus:border-term-cyan/60 focus:outline-none
              focus:shadow-[0_0_8px_rgba(0,229,255,0.15)] transition-all
              placeholder-gray-700"
     />
     <button
-      onclick={loadStore}
-      disabled={isLoading}
+      onclick={fetchCatalog}
+      disabled={$catalogStatus === 'loading'}
       class="bg-term-cyan/90 hover:bg-term-cyan text-black font-bold text-[10px]
              px-3 py-1.5 rounded tracking-wider transition-all
              hover:shadow-[0_0_12px_rgba(0,229,255,0.4)] active:scale-95
              disabled:opacity-50"
     >
-      {isLoading ? '...' : 'LOAD'}
+      {$catalogStatus === 'loading' ? '...' : 'LOAD'}
     </button>
   </div>
 
-  {#if $recentStores.length > 0}
-    <details class="mt-1.5">
-      <summary class="text-[10px] text-gray-600 cursor-pointer hover:text-gray-400 transition-colors">
-        Recent ({$recentStores.length})
-      </summary>
-      <div class="mt-1 space-y-0.5 max-h-24 overflow-y-auto">
-        {#each $recentStores as url}
-          <button
-            onclick={() => selectRecent(url)}
-            class="block w-full text-left text-[10px] text-gray-500 hover:text-term-cyan
-                   truncate px-1 py-0.5 rounded hover:bg-gray-900/50 transition-colors"
-          >
-            {url}
-          </button>
-        {/each}
-      </div>
-    </details>
-  {/if}
+  <!-- Status -->
+  <div class="mt-1.5 text-[10px] text-gray-600 truncate">
+    {#if $catalogStatus === 'loading'}
+      Loading catalog...
+    {:else if $catalogStatus === 'error'}
+      <span class="text-red-400">{$catalogError}</span>
+    {:else if $catalogStatus === 'loaded'}
+      {$zones.length} zones discovered
+    {:else}
+      Ready
+    {/if}
+  </div>
 
-  <div class="mt-1.5 text-[10px] text-gray-600 truncate">{$status}</div>
+  <!-- Zone list -->
+  {#if $zones.length > 0}
+    <div class="mt-2 space-y-0.5">
+      {#each $zones as zone}
+        <button
+          onclick={() => handleZoneClick(zone.id)}
+          class="flex items-center gap-2 w-full text-left px-2 py-1 rounded
+                 transition-colors text-[11px]
+                 {zone.id === $activeZoneId
+                   ? 'bg-term-cyan/10 text-term-cyan'
+                   : 'text-gray-500 hover:text-gray-300 hover:bg-gray-900/50'}"
+        >
+          <span class="w-1.5 h-1.5 rounded-full flex-shrink-0
+                       {zone.id === $activeZoneId ? 'bg-term-cyan shadow-[0_0_4px_rgba(0,229,255,0.6)]' : 'bg-gray-700'}"></span>
+          <span class="font-mono">UTM {zone.utmZone}</span>
+          {#if zone.id === $activeZoneId}
+            <span class="ml-auto text-[9px] bg-term-cyan/20 text-term-cyan px-1.5 py-0.5 rounded tracking-wider">
+              LOADED
+            </span>
+          {/if}
+        </button>
+      {/each}
+    </div>
+  {/if}
 </div>

@@ -1,4 +1,4 @@
-import type { Map as MaplibreMap, LngLatBoundsLike } from 'maplibre-gl';
+import type { Map as MaplibreMap } from 'maplibre-gl';
 import type {
   ZarrTesseraOptions, StoreMetadata, CachedChunk,
   ChunkBounds, UtmBounds, PreviewMode, ZarrTesseraEvents, DebugLogEntry,
@@ -18,7 +18,8 @@ export class ZarrTesseraSource {
   private workerPool: WorkerPool | null = null;
   private chunkCache = new Map<string, CachedChunk>();
   private currentAbort: AbortController | null = null;
-  private autoZoomNext = true;
+
+
   private totalLoaded = 0;
   private clickedChunks = new Set<string>();
   /** Cache of raw 128-d embeddings for tiles loaded via double-click. */
@@ -64,9 +65,6 @@ export class ZarrTesseraSource {
       // Add overlays
       this.addOverlays();
 
-      // Fly to store bounds
-      this.flyToStoreBounds();
-
       // Listen for viewport changes
       this.moveHandler = () => this.updateVisibleChunks();
       map.on('moveend', this.moveHandler);
@@ -85,8 +83,8 @@ export class ZarrTesseraSource {
         this.loadFullChunk(chunk.ci, chunk.cj);
       });
 
-      // Start initial load after fly animation
-      setTimeout(() => this.updateVisibleChunks(), 1800);
+      // Load visible chunks immediately
+      this.updateVisibleChunks();
     } catch (err) {
       this.emit('error', err instanceof Error ? err : new Error(String(err)));
       throw err;
@@ -144,7 +142,7 @@ export class ZarrTesseraSource {
   setGridVisible(visible: boolean): void {
     this.opts.gridVisible = visible;
     const vis = visible ? 'visible' : 'none';
-    for (const id of ['chunk-grid-nodata', 'chunk-grid-data', 'chunk-grid-lines']) {
+    for (const id of ['chunk-grid-lines']) {
       if (this.map?.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', vis);
     }
   }
@@ -152,7 +150,7 @@ export class ZarrTesseraSource {
   setUtmBoundaryVisible(visible: boolean): void {
     this.opts.utmBoundaryVisible = visible;
     const vis = visible ? 'visible' : 'none';
-    for (const id of ['utm-zone-fill', 'utm-zone-line']) {
+    for (const id of ['utm-zone-line']) {
       if (this.map?.getLayer(id)) this.map.setLayoutProperty(id, 'visibility', vis);
     }
   }
@@ -783,9 +781,7 @@ export class ZarrTesseraSource {
     const style = this.map!.getStyle();
     if (!style?.layers) return;
     // Grid fills go above chunk data but below loading/classification
-    if (this.map!.getLayer('chunk-grid-nodata')) this.map!.moveLayer('chunk-grid-nodata');
-    if (this.map!.getLayer('chunk-grid-data')) this.map!.moveLayer('chunk-grid-data');
-    // Loading animation overlays above grid fills
+    // Loading animation overlays above grid lines
     for (const layer of style.layers) {
       if (layer.id.startsWith('zarr-load-lyr-')) {
         this.map!.moveLayer(layer.id);
@@ -946,17 +942,6 @@ export class ZarrTesseraSource {
       if ((result.nValid as number) > 0) {
         canvas = this.rgbaToCanvas(result.rgba as ArrayBuffer, w, h);
         ({ sourceId, layerId } = this.addChunkToMap(ci, cj, canvas));
-
-        if (this.autoZoomNext) {
-          this.autoZoomNext = false;
-          const corners = this.chunkCorners(ci, cj);
-          const lngs = corners.map(c => c[0]);
-          const lats = corners.map(c => c[1]);
-          this.map!.fitBounds([
-            [Math.min(...lngs), Math.min(...lats)],
-            [Math.max(...lngs), Math.max(...lats)],
-          ] as LngLatBoundsLike, { padding: 40, duration: 1000 });
-        }
       }
 
       this.chunkCache.set(key, {
@@ -1016,26 +1001,6 @@ export class ZarrTesseraSource {
     await Promise.all(tasks);
   }
 
-  private flyToStoreBounds(): void {
-    if (!this.store || !this.map || !this.proj) return;
-    const t = this.store.meta.transform;
-    const px = t[0], originE = t[2], originN = t[5];
-    const w = this.store.meta.shape[1], h = this.store.meta.shape[0];
-
-    const corners = [
-      this.proj.inverse(originE, originN),
-      this.proj.inverse(originE + w * px, originN),
-      this.proj.inverse(originE + w * px, originN - h * px),
-      this.proj.inverse(originE, originN - h * px),
-    ];
-    const lngs = corners.map(c => c[0]);
-    const lats = corners.map(c => c[1]);
-    this.map.fitBounds([
-      [Math.min(...lngs), Math.min(...lats)],
-      [Math.max(...lngs), Math.max(...lats)],
-    ] as LngLatBoundsLike, { padding: 40, duration: 1500 });
-  }
-
   private addOverlays(): void {
     if (!this.store || !this.map || !this.proj) return;
     this.removeOverlays();
@@ -1058,12 +1023,6 @@ export class ZarrTesseraSource {
           coordinates: [[[lonMin, latMin], [lonMax, latMin], [lonMax, latMax], [lonMin, latMax], [lonMin, latMin]]],
         },
       },
-    });
-
-    this.map.addLayer({
-      id: 'utm-zone-fill', type: 'fill', source: 'utm-zone',
-      paint: { 'fill-color': '#39ff14', 'fill-opacity': 0.03 },
-      layout: { visibility: this.opts.utmBoundaryVisible ? 'visible' : 'none' },
     });
 
     // Chunk grid
@@ -1097,18 +1056,6 @@ export class ZarrTesseraSource {
     const gridVis = this.opts.gridVisible ? 'visible' : 'none';
 
     this.map.addLayer({
-      id: 'chunk-grid-nodata', type: 'fill', source: 'chunk-grid',
-      filter: ['==', ['get', 'hasData'], false],
-      paint: { 'fill-color': '#374151', 'fill-opacity': 0.15 },
-      layout: { visibility: gridVis },
-    });
-    this.map.addLayer({
-      id: 'chunk-grid-data', type: 'fill', source: 'chunk-grid',
-      filter: ['==', ['get', 'hasData'], true],
-      paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.04 },
-      layout: { visibility: gridVis },
-    });
-    this.map.addLayer({
       id: 'chunk-grid-lines', type: 'line', source: 'chunk-grid',
       paint: {
         'line-color': ['case', ['get', 'hasData'], '#00e5ff', '#374151'],
@@ -1125,7 +1072,7 @@ export class ZarrTesseraSource {
   }
 
   private removeOverlays(): void {
-    const layers = ['chunk-grid-nodata', 'chunk-grid-data', 'chunk-grid-lines', 'utm-zone-fill', 'utm-zone-line', 'emb-highlight-line'];
+    const layers = ['chunk-grid-lines', 'utm-zone-line', 'emb-highlight-line'];
     for (const id of layers) {
       if (this.map?.getLayer(id)) this.map.removeLayer(id);
     }
