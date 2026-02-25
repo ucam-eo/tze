@@ -61,7 +61,26 @@ export interface DebugLogEntry {
 export interface ZarrTesseraEvents {
   'metadata-loaded': StoreMetadata;
   'chunk-loaded': { ci: number; cj: number };
+  'embeddings-loaded': { ci: number; cj: number };
   'error': Error;
   'loading': { total: number; done: number };
   'debug': DebugLogEntry;
+}
+
+export interface TileEmbeddings {
+  ci: number;
+  cj: number;
+  emb: Int8Array;         // [h * w * nBands] raw embedding bytes
+  scales: Float32Array;   // [h * w] scale values
+  width: number;
+  height: number;
+  nBands: number;
+}
+
+export interface EmbeddingAt {
+  embedding: Float32Array; // 128-d vector
+  ci: number;
+  cj: number;
+  row: number;             // pixel row within chunk
+  col: number;             // pixel col within chunk
 }
