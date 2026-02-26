@@ -1146,10 +1146,19 @@ export class ZarrTesseraSource {
         layerOpts.bounds = this.opts.globalPreviewBounds;
     }
 
-    this.previewLayer = new ZarrLayer(layerOpts as any);
+    layerOpts.onLoadingStateChange = (state: { isLoading: boolean; error?: string }) => {
+        if (state.error) {
+            this.debug('error', `zarr-layer: ${state.error}`);
+        }
+    };
 
-    // ZarrLayer implements MapLibre's CustomLayerInterface
-    this.map.addLayer(this.previewLayer as any);
-    this.debug('info', `Preview layer added via zarr-layer (${previewVar})`);
+    try {
+        this.previewLayer = new ZarrLayer(layerOpts as any);
+        this.map.addLayer(this.previewLayer as any);
+        this.debug('info', `Preview layer added via zarr-layer (${previewVar})`);
+    } catch (err) {
+        this.debug('error', `Failed to add preview layer: ${(err as Error).message}`);
+        this.previewLayer = null;
+    }
   }
 }
