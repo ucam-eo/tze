@@ -23,6 +23,8 @@ async function fetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
 export interface CatalogResult {
   zones: ZoneDescriptor[];
   globalPreviewUrl: string | null;
+  /** Union of all zone bounding boxes [west, south, east, north] */
+  globalBounds: [number, number, number, number] | null;
 }
 
 export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Promise<CatalogResult> {
@@ -85,7 +87,18 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
     // Global preview not available — that's fine
   }
 
-  return { zones, globalPreviewUrl };
+  // Compute global bounds from zone bboxes
+  let globalBounds: [number, number, number, number] | null = null;
+  if (zones.length > 0) {
+    globalBounds = [
+      Math.min(...zones.map(z => z.bbox[0])),
+      Math.min(...zones.map(z => z.bbox[1])),
+      Math.max(...zones.map(z => z.bbox[2])),
+      Math.max(...zones.map(z => z.bbox[3])),
+    ];
+  }
+
+  return { zones, globalPreviewUrl, globalBounds };
 }
 
 /** Simple point-in-bbox test (WGS84). */

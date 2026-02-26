@@ -12,6 +12,8 @@ export interface ZarrTesseraOptions {
   utmBoundaryVisible?: boolean;
   /** URL for the global EPSG:4326 preview store (used by @carbonplan/zarr-layer) */
   globalPreviewUrl?: string;
+  /** Explicit bounds [west, south, east, north] in EPSG:4326 for the global preview */
+  globalPreviewBounds?: [number, number, number, number];
 }
 
 export interface StoreMetadata {

@@ -4,7 +4,7 @@
   import {
     catalogUrl, zones, activeZoneId, catalogStatus, catalogError, switchZone,
   } from '../stores/stac';
-  import { status, globalPreviewUrl } from '../stores/zarr';
+  import { status, globalPreviewUrl, globalPreviewBounds } from '../stores/zarr';
 
   let urlInput = $state('');
 
@@ -28,6 +28,7 @@
       const result = await loadCatalog(url);
       $zones = result.zones;
       $globalPreviewUrl = result.globalPreviewUrl ?? '';
+      $globalPreviewBounds = result.globalBounds;
       $catalogStatus = 'loaded';
       $status = `${result.zones.length} zones discovered${result.globalPreviewUrl ? ' (global preview available)' : ''}`;
     } catch (err) {

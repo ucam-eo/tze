@@ -2,7 +2,7 @@ import { writable, get } from 'svelte/store';
 import { ZarrTesseraSource } from '@ucam-eo/maplibre-zarr-tessera';
 import type { ZoneDescriptor } from '../lib/stac';
 import { mapInstance } from './map';
-import { zarrSource, metadata, bands, opacity, preview, loading, status, globalPreviewUrl } from './zarr';
+import { zarrSource, metadata, bands, opacity, preview, loading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
 
 export const catalogUrl = writable('https://dl2.geotessera.org/zarr/v0/catalog.json');
 export const zones = writable<ZoneDescriptor[]>([]);
@@ -38,6 +38,7 @@ export async function switchZone(zoneId: string): Promise<void> {
       opacity: get(opacity),
       preview: get(preview),
       globalPreviewUrl: get(globalPreviewUrl),
+      globalPreviewBounds: get(globalPreviewBounds) ?? undefined,
     });
 
     source.on('metadata-loaded', (meta) => {

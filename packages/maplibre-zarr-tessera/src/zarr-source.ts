@@ -11,8 +11,12 @@ import { ZarrLayer } from '@carbonplan/zarr-layer';
 
 type EventCallback<T> = (data: T) => void;
 
+type ResolvedOptions = Required<Omit<ZarrTesseraOptions, 'globalPreviewBounds'>> & {
+  globalPreviewBounds?: [number, number, number, number];
+};
+
 export class ZarrTesseraSource {
-  private opts: Required<ZarrTesseraOptions>;
+  private opts: ResolvedOptions;
   private map: MaplibreMap | null = null;
   private store: ZarrStore | null = null;
   private proj: UtmProjection | null = null;
@@ -45,6 +49,7 @@ export class ZarrTesseraSource {
       gridVisible: options.gridVisible ?? true,
       utmBoundaryVisible: options.utmBoundaryVisible ?? true,
       globalPreviewUrl: options.globalPreviewUrl ?? '',
+      globalPreviewBounds: options.globalPreviewBounds,
     };
   }
 
@@ -1116,7 +1121,7 @@ export class ZarrTesseraSource {
 
     const previewVar = this.opts.preview === 'pca' ? 'pca_rgb' : 'rgb';
 
-    this.previewLayer = new ZarrLayer({
+    const layerOpts: Record<string, unknown> = {
         id: `zarr-preview-${Date.now()}`,
         source: this.opts.globalPreviewUrl,
         variable: previewVar,
@@ -1134,7 +1139,14 @@ export class ZarrTesseraSource {
         opacity: this.opts.opacity,
         zarrVersion: 3,
         spatialDimensions: { lat: 'lat', lon: 'lon' },
-    });
+    };
+
+    // Provide explicit bounds so zarr-layer doesn't try to load coordinate arrays
+    if (this.opts.globalPreviewBounds) {
+        layerOpts.bounds = this.opts.globalPreviewBounds;
+    }
+
+    this.previewLayer = new ZarrLayer(layerOpts as any);
 
     // ZarrLayer implements MapLibre's CustomLayerInterface
     this.map.addLayer(this.previewLayer as any);
