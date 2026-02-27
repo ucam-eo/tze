@@ -12,6 +12,7 @@
     "@tensorflow/tfjs-backend-webgl": "^4.22.0",
     "@tensorflow/tfjs-core": "^4.22.0",
     "@ucam-eo/maplibre-zarr-tessera": "workspace:*",
+    "lucide-svelte": "^0.575.0",
     "maplibre-gl": "^4.7.1",
     "stac-js": "^0.2.1"
   },

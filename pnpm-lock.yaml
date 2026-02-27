@@ -19,6 +19,9 @@ importers:
       '@ucam-eo/maplibre-zarr-tessera':
         specifier: workspace:*
         version: link:../../packages/maplibre-zarr-tessera
+      lucide-svelte:
+        specifier: ^0.575.0
+        version: 0.575.0(svelte@5.53.3)
       maplibre-gl:
         specifier: ^4.7.1
         version: 4.7.1
@@ -1028,6 +1031,11 @@ packages:
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
+
+  lucide-svelte@0.575.0:
+    resolution: {integrity: sha512-Tu15tJfbmRNPaU61yeNFf3jfRHs8ABA+NwTt7TWmwVbhlSA3H7sW65tX6RttcP7HGV4aHUlYhXixZOlntoFBdw==}
+    peerDependencies:
+      svelte: ^3 || ^4 || ^5.0.0-next.42
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
@@ -2169,6 +2177,10 @@ snapshots:
   long@4.0.0: {}
 
   loupe@3.2.1: {}
+
+  lucide-svelte@0.575.0(svelte@5.53.3):
+    dependencies:
+      svelte: 5.53.3
 
   magic-string@0.30.21:
     dependencies:

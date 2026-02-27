@@ -339,6 +339,12 @@ export class ZarrTesseraSource {
     return { ci, cj };
   }
 
+  /** Get the lng/lat corners of a chunk tile: [topLeft, topRight, bottomRight, bottomLeft]. */
+  getChunkBoundsLngLat(ci: number, cj: number): [[number, number], [number, number], [number, number], [number, number]] | null {
+    if (!this.store || !this.proj) return null;
+    return this.chunkCorners(ci, cj);
+  }
+
   /** Extract the 128-d embedding vector at a map coordinate.
    *  Returns null if the chunk's embeddings haven't been loaded. */
   getEmbeddingAt(lng: number, lat: number): EmbeddingAt | null {

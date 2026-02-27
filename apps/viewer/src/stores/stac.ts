@@ -12,7 +12,7 @@ export const catalogError = writable<string>('');
 
 /**
  * Switch the active zarr source to a different zone.
- * Used by both StoreSelector (manual click) and App.svelte (auto-switch on pan).
+ * Used by both TopBar (zone dropdown) and App.svelte (auto-switch on pan).
  */
 export async function switchZone(zoneId: string): Promise<void> {
   const zone = get(zones).find(z => z.id === zoneId);

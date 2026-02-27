@@ -1,7 +1,7 @@
 <script lang="ts">
   import { zarrSource, metadata } from '../stores/zarr';
   import {
-    classes, labels, activeClassName, activeClass, kernelSize,
+    classes, labels, activeClassName, activeClass,
     kValue, confidenceThreshold, classificationOpacity, isClassified,
     labelCounts, addClass, removeClass, clearLabels,
   } from '../stores/classifier';
@@ -151,21 +151,6 @@
         <OsmImport />
       </div>
     {/if}
-  </div>
-
-  <div>
-    <span class="text-gray-600 text-[10px]">Kernel</span>
-    <div class="flex gap-1 mt-1">
-      {#each [1, 3, 5, 7, 9] as size}
-        <button
-          onclick={() => $kernelSize = size}
-          class="flex-1 text-[10px] font-bold py-0.5 rounded border transition-all
-                 {$kernelSize === size
-                   ? 'bg-term-cyan/20 text-term-cyan border-term-cyan/40'
-                   : 'bg-gray-950 text-gray-600 border-gray-700/60 hover:text-gray-400'}"
-        >{size}</button>
-      {/each}
-    </div>
   </div>
 
   <div class="flex items-center gap-2">

@@ -89,6 +89,17 @@
     }
     return counts;
   });
+
+  let copied = $state(false);
+  function copyLogs() {
+    const text = logs.map(e =>
+      `${formatTime(e.time)} ${TYPE_LABELS[e.type].padEnd(6)} ${e.msg}`
+    ).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      copied = true;
+      setTimeout(() => copied = false, 1500);
+    });
+  }
 </script>
 
 <style>
@@ -102,8 +113,8 @@
   }
 </style>
 
-<div class="absolute bottom-2 left-2 right-[300px] z-10 font-mono select-none"
-     style="max-width: calc(100vw - 320px);">
+<div class="absolute bottom-2 left-2 right-[260px] z-10 font-mono select-none"
+     style="max-width: calc(100vw - 280px);">
   <!-- Toggle bar -->
   <button
     onclick={() => expanded = !expanded}
@@ -120,6 +131,20 @@
     {/if}
     <span class="text-gray-700 ml-auto tabular-nums">{logs.length}</span>
   </button>
+  {#if expanded}
+    <div class="flex items-center bg-black/90 border-x border-gray-800/60 px-3 py-1">
+      <button
+        onclick={copyLogs}
+        class="px-2 py-0.5 rounded text-[9px] border cursor-pointer
+               {copied ? 'text-green-400 border-green-800' : 'text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600'}"
+      >{copied ? 'copied!' : 'copy logs'}</button>
+      <button
+        onclick={() => { logs = []; }}
+        class="ml-2 px-2 py-0.5 rounded text-[9px] border cursor-pointer
+               text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600"
+      >clear</button>
+    </div>
+  {/if}
 
   <!-- Embedding fetch progress bar -->
   {#if embProgress}

@@ -21,7 +21,6 @@ export interface LabelPoint {
 export const classes = writable<ClassDef[]>([]);
 export const labels = writable<LabelPoint[]>([]);
 export const activeClassName = writable<string | null>(null);
-export const kernelSize = writable(1);
 export const kValue = writable(5);
 export const confidenceThreshold = writable(0.5);
 export const classificationOpacity = writable(0.7);

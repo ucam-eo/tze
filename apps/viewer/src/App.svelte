@@ -2,16 +2,16 @@
   import maplibregl from 'maplibre-gl';
   import { onMount } from 'svelte';
   import { mapInstance } from './stores/map';
-  import StoreSelector from './components/StoreSelector.svelte';
+  import TopBar from './components/TopBar.svelte';
+  import CatalogModal from './components/CatalogModal.svelte';
   import LayerSwitcher from './components/LayerSwitcher.svelte';
   import ControlPanel from './components/ControlPanel.svelte';
-  import InfoPanel from './components/InfoPanel.svelte';
   import DebugConsole from './components/DebugConsole.svelte';
   import ToolSwitcher from './components/ToolSwitcher.svelte';
   import type SimilaritySearch from './components/SimilaritySearch.svelte';
   import { zarrSource } from './stores/zarr';
   import { get } from 'svelte/store';
-  import { activeClass, classes, kernelSize, addLabel, isClassified } from './stores/classifier';
+  import { activeClass, classes, addLabel, isClassified } from './stores/classifier';
   import { activeTool } from './stores/tools';
   import { zones, activeZoneId, switchZone } from './stores/stac';
   import { pointInBbox } from './lib/stac';
@@ -19,6 +19,7 @@
   let mapContainer: HTMLDivElement;
   let labelMarkers: maplibregl.Marker[] = [];
   let similarityRef: SimilaritySearch | undefined = $state();
+  let catalogModalOpen = $state(true);
 
   onMount(() => {
     const map = new maplibregl.Map({
@@ -39,19 +40,71 @@
       zoom: 3,
     });
 
-    map.on('load', () => { $mapInstance = map; });
+    map.on('load', () => {
+      $mapInstance = map;
 
-    // Coordinates display
+      // Add hover highlight layer (initially empty)
+      map.addSource('tile-hover', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer({
+        id: 'tile-hover-fill',
+        type: 'fill',
+        source: 'tile-hover',
+        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.08 },
+      });
+      map.addLayer({
+        id: 'tile-hover-line',
+        type: 'line',
+        source: 'tile-hover',
+        paint: { 'line-color': '#00e5ff', 'line-width': 1.5, 'line-opacity': 0.5 },
+      });
+    });
+
+    // Track hovered chunk to avoid redundant updates
+    let hoveredChunkKey = '';
+
+    // Coordinates display + tile hover highlight
     map.on('mousemove', (e) => {
       const coord = document.getElementById('coord-text');
       if (coord) coord.textContent = `${e.lngLat.lng.toFixed(4)}, ${e.lngLat.lat.toFixed(4)}`;
+
+      // Tile hover highlight
+      const src = get(zarrSource);
+      const hoverSource = map.getSource('tile-hover') as maplibregl.GeoJSONSource | undefined;
+      if (src && hoverSource) {
+        const chunk = src.getChunkAtLngLat(e.lngLat.lng, e.lngLat.lat);
+        const key = chunk ? `${chunk.ci}_${chunk.cj}` : '';
+        if (key !== hoveredChunkKey) {
+          hoveredChunkKey = key;
+          if (chunk) {
+            const corners = src.getChunkBoundsLngLat(chunk.ci, chunk.cj);
+            if (corners) {
+              hoverSource.setData({
+                type: 'FeatureCollection',
+                features: [{
+                  type: 'Feature',
+                  properties: {},
+                  geometry: {
+                    type: 'Polygon',
+                    coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
+                  },
+                }],
+              });
+            }
+          } else {
+            hoverSource.setData({ type: 'FeatureCollection', features: [] });
+          }
+        }
+      }
 
       // Floating classification tooltip
       const tip = document.getElementById('class-tooltip');
       if (!tip) return;
       if (get(isClassified)) {
-        const src = get(zarrSource);
-        const classId = src?.getClassificationAt(e.lngLat.lng, e.lngLat.lat) ?? null;
+        const classifySrc = src ?? get(zarrSource);
+        const classId = classifySrc?.getClassificationAt(e.lngLat.lng, e.lngLat.lat) ?? null;
 
         if (classId != null && classId >= 0) {
           const cls = get(classes).find(c => c.id === classId);
@@ -73,6 +126,13 @@
       tip.style.display = 'none';
     });
 
+    // Clear hover when mouse leaves the map
+    map.on('mouseout', () => {
+      hoveredChunkKey = '';
+      const hoverSource = map.getSource('tile-hover') as maplibregl.GeoJSONSource | undefined;
+      if (hoverSource) hoverSource.setData({ type: 'FeatureCollection', features: [] });
+    });
+
     // Map click — dispatched based on active tool
     // NOTE: use get() to read stores inside imperative callbacks —
     // the $ prefix only works in Svelte's reactive context.
@@ -90,8 +150,7 @@
         const cls = get(activeClass);
         if (!cls) return;
 
-        const ks = get(kernelSize);
-        const embeddings = src.getEmbeddingsInKernel(e.lngLat.lng, e.lngLat.lat, ks);
+        const embeddings = src.getEmbeddingsInKernel(e.lngLat.lng, e.lngLat.lat, 1);
         if (embeddings.length === 0) return;
 
         for (const emb of embeddings) {
@@ -192,24 +251,19 @@
 
 <div bind:this={mapContainer} id="map"></div>
 
-<!-- Control panel -->
-<div class="absolute top-4 right-4 w-[280px] max-h-[calc(100vh-2rem)] bg-black/85 backdrop-blur-xl
+<!-- Top bar -->
+<TopBar onOpenCatalog={() => { catalogModalOpen = true; }} />
+
+<!-- Catalog modal -->
+<CatalogModal bind:open={catalogModalOpen} />
+
+<!-- Sidebar -->
+<div class="absolute top-12 right-4 w-[240px] max-h-[calc(100vh-4rem)] bg-black/85 backdrop-blur-xl
             border border-gray-800/80 rounded-lg shadow-2xl shadow-cyan-900/20
             overflow-y-auto select-none z-10 font-mono text-gray-300 text-xs">
-  <!-- Header -->
-  <div class="px-4 py-3 border-b border-gray-800/60">
-    <div class="flex items-center gap-2">
-      <div class="w-2 h-2 rounded-full bg-term-cyan shadow-[0_0_6px_rgba(0,229,255,0.6)]"></div>
-      <h1 class="text-term-cyan text-sm font-bold tracking-[0.2em] uppercase">TZE</h1>
-    </div>
-    <p class="text-gray-600 text-[10px] mt-0.5 tracking-wider">TESSERA ZARR EXPLORER</p>
-  </div>
-
-  <StoreSelector />
   <LayerSwitcher />
   <ControlPanel />
   <ToolSwitcher bind:similarityRef={similarityRef} />
-  <InfoPanel />
 </div>
 
 <!-- Debug console -->
