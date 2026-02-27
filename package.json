@@ -12,6 +12,10 @@
     "node": ">=20"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": ["esbuild"],
+    "overrides": {
+      "zarrita": "link:../zarrita.js/packages/zarrita",
+      "@zarrita/storage": "link:../zarrita.js/packages/@zarrita-storage"
+    }
   }
 }

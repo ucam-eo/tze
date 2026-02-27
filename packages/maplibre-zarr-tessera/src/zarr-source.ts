@@ -34,6 +34,8 @@ export class ZarrTesseraSource {
   private listeners = new Map<string, Set<EventCallback<unknown>>>();
   /** Tracks active loading animations per chunk key → animation frame ID. */
   private loadingAnimations = new Map<string, number>();
+  /** Per-tile download progress (0..1), keyed by chunk key. */
+  private tileProgress = new Map<string, number>();
   /** Per-pixel class ID maps from classification, keyed by chunk key. */
   private classificationMaps = new Map<string, { width: number; height: number; classMap: Int16Array }>();
 
@@ -225,10 +227,22 @@ export class ZarrTesseraSource {
       const expectedBytes = w * h * nBands;
 
       this.debug('fetch', `Loading embeddings (${ci},${cj}): ${w}x${h}x${nBands} = ${(expectedBytes / 1024).toFixed(0)} KB`);
-      this.emit('embedding-progress', { ci, cj, stage: 'fetching', bytes: expectedBytes });
+      this.tileProgress.set(key, 0);
+      this.emit('embedding-progress', { ci, cj, stage: 'fetching', bytes: expectedBytes, bytesLoaded: 0 });
+
+      const onProgress = (ev: { bytes_loaded: number; chunks_completed: number; chunks_total: number }) => {
+        const frac = expectedBytes > 0 ? Math.min(1, ev.bytes_loaded / expectedBytes) : 0;
+        this.tileProgress.set(key, frac);
+        this.emit('embedding-progress', {
+          ci, cj, stage: 'fetching', bytes: expectedBytes,
+          bytesLoaded: ev.bytes_loaded,
+          chunksCompleted: ev.chunks_completed,
+          chunksTotal: ev.chunks_total,
+        });
+      };
 
       const [embView, scalesView] = await Promise.all([
-        fetchRegion(this.store.embArr, [[r0, r1], [c0, c1], null]),
+        fetchRegion(this.store.embArr, [[r0, r1], [c0, c1], null], { onProgress }),
         fetchRegion(this.store.scalesArr, [[r0, r1], [c0, c1]]),
       ]);
       this.debug('fetch', `Embeddings fetched (${ci},${cj}), rendering...`);
@@ -741,40 +755,204 @@ export class ZarrTesseraSource {
     const h = r1 - r0;
     const w = c1 - c0;
 
-    // Create the scan canvas
+    // Create the animation canvas
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
 
+    // Capture existing tile pixels for background distortion
+    const existing = this.chunkCache.get(key);
+    let bgPixels: ImageData | null = null;
+    if (existing?.canvas) {
+      const tmp = document.createElement('canvas');
+      tmp.width = w;
+      tmp.height = h;
+      const tmpCtx = tmp.getContext('2d')!;
+      tmpCtx.drawImage(existing.canvas, 0, 0, w, h);
+      bgPixels = tmpCtx.getImageData(0, 0, w, h);
+    }
+
+    // Simple hash for pseudo-random per-pixel noise
+    const rng = (x: number) => {
+      x = ((x >> 16) ^ x) * 0x45d9f3b;
+      x = ((x >> 16) ^ x) * 0x45d9f3b;
+      return ((x >> 16) ^ x) & 0xff;
+    };
+
     const renderFrame = (canvas: HTMLCanvasElement, t: number) => {
       const ctx = canvas.getContext('2d')!;
-      ctx.clearRect(0, 0, w, h);
+      const progress = this.tileProgress.get(key) ?? 0;
+      const cx = w / 2;
+      const cy = h / 2;
+      const radius = Math.min(w, h) * 0.30;
+      const tau = Math.PI * 2;
 
-      // Sweeping scanline band — cyan glow moving top-to-bottom
-      const cycle = 3000; // ms per full sweep
-      const phase = (t % cycle) / cycle;
-      const scanY = phase * h;
-      const bandHeight = h * 0.15;
+      // --- Background: distorted RGB tile ---
+      if (bgPixels) {
+        const src = bgPixels.data;
+        const out = ctx.createImageData(w, h);
+        const dst = out.data;
+        const glitchIntensity = 1.0 - progress; // distortion fades as download completes
+        const tSec = t / 1000;
 
-      // Draw the scan band with gaussian-ish falloff
-      for (let dy = -bandHeight; dy <= bandHeight; dy++) {
-        const y = Math.round(scanY + dy);
-        if (y < 0 || y >= h) continue;
-        const intensity = Math.exp(-(dy * dy) / (2 * (bandHeight * 0.3) ** 2));
-        ctx.fillStyle = `rgba(0, 229, 255, ${0.35 * intensity})`;
-        ctx.fillRect(0, y, w, 1);
+        // Chromatic aberration offset (pixels)
+        const caOffset = Math.round(3 + 6 * glitchIntensity * (0.5 + 0.5 * Math.sin(tSec * 2.3)));
+
+        // Glitch band: a horizontal band that shifts pixels sideways
+        const glitchBandY = Math.floor((t * 0.15) % h);
+        const glitchBandH = Math.floor(8 + 20 * glitchIntensity);
+        const glitchShift = Math.floor((Math.sin(tSec * 7.1) * 12 + Math.sin(tSec * 13.3) * 6) * glitchIntensity);
+
+        for (let y = 0; y < h; y++) {
+          // Scanline darkening (every other line)
+          const scanline = y % 2 === 0 ? 1.0 : (0.85 + 0.15 * progress);
+
+          // Per-line horizontal jitter
+          const inGlitchBand = y >= glitchBandY && y < glitchBandY + glitchBandH;
+          const lineShift = inGlitchBand ? glitchShift : 0;
+
+          for (let x = 0; x < w; x++) {
+            const di = (y * w + x) * 4;
+
+            // Source coordinates with chromatic aberration
+            const sx = x + lineShift;
+            const rX = Math.max(0, Math.min(w - 1, sx + caOffset));
+            const gX = Math.max(0, Math.min(w - 1, sx));
+            const bX = Math.max(0, Math.min(w - 1, sx - caOffset));
+
+            const rI = (y * w + rX) * 4;
+            const gI = (y * w + gX) * 4;
+            const bI = (y * w + bX) * 4;
+
+            // Read split channels
+            let r = src[rI];
+            let g = src[gI + 1];
+            let b = src[bI + 2];
+
+            // Cyan/green colour shift
+            const shift = 0.3 * glitchIntensity;
+            r = Math.round(r * (1 - shift * 0.7));
+            g = Math.round(g * (1 + shift * 0.15));
+            b = Math.round(b * (1 + shift * 0.3));
+
+            // Static noise in glitch band
+            if (inGlitchBand && Math.random() < 0.08 * glitchIntensity) {
+              const n = rng(x * 7919 + y * 6271 + (t | 0)) & 0x3f;
+              r = n; g = n + 40; b = n + 50;
+            }
+
+            // Apply scanline
+            dst[di]     = Math.min(255, r * scanline) | 0;
+            dst[di + 1] = Math.min(255, g * scanline) | 0;
+            dst[di + 2] = Math.min(255, b * scanline) | 0;
+            dst[di + 3] = 255;
+          }
+        }
+
+        ctx.putImageData(out, 0, 0);
+
+        // Dark vignette overlay
+        const vg = ctx.createRadialGradient(cx, cy, radius * 0.8, cx, cy, Math.max(w, h) * 0.8);
+        vg.addColorStop(0, 'rgba(0, 0, 0, 0)');
+        vg.addColorStop(1, `rgba(0, 5, 10, ${0.4 + 0.3 * glitchIntensity})`);
+        ctx.fillStyle = vg;
+        ctx.fillRect(0, 0, w, h);
+      } else {
+        // No background — dark fill
+        ctx.fillStyle = 'rgba(0, 8, 12, 0.9)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = 'rgba(0, 229, 255, 0.015)';
+        for (let y = 0; y < h; y += 3) ctx.fillRect(0, y, w, 1);
       }
 
-      // Subtle overall pulse
-      const pulse = 0.04 + 0.03 * Math.sin(t / 800);
-      ctx.fillStyle = `rgba(0, 229, 255, ${pulse})`;
-      ctx.fillRect(0, 0, w, h);
+      // --- HUD overlay: spinning rings + progress arc ---
 
-      // Horizontal scan lines for texture (every 4px)
-      ctx.fillStyle = 'rgba(0, 229, 255, 0.03)';
-      for (let y = 0; y < h; y += 4) {
-        ctx.fillRect(0, y, w, 1);
+      // Spinning outer ring
+      const spin1 = (t / 600) % tau;
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.18)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 1.15, spin1, spin1 + tau * 0.7);
+      ctx.stroke();
+
+      // Counter-spinning dashed ring
+      const spin2 = -(t / 900) % tau;
+      ctx.setLineDash([4, 8]);
+      ctx.strokeStyle = 'rgba(0, 180, 220, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 1.30, spin2, spin2 + tau);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Tick marks around the ring
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.1)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 36; i++) {
+        const a = (i / 36) * tau;
+        const inner = radius * 1.02;
+        const outer = i % 9 === 0 ? radius * 1.12 : radius * 1.06;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
+        ctx.lineTo(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer);
+        ctx.stroke();
       }
+
+      // Progress arc
+      const arcEnd = progress * tau;
+      const arcStart = -Math.PI / 2;
+      if (progress > 0) {
+        // Glow
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.2)';
+        ctx.lineWidth = Math.max(6, radius * 0.20);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, arcStart, arcStart + arcEnd);
+        ctx.stroke();
+
+        // Main arc
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.9)';
+        ctx.lineWidth = Math.max(2, radius * 0.08);
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, arcStart, arcStart + arcEnd);
+        ctx.stroke();
+      }
+
+      // Track ring (dim)
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.06)';
+      ctx.lineWidth = Math.max(2, radius * 0.08);
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, arcStart + arcEnd, arcStart + tau);
+      ctx.stroke();
+
+      // Tip glow
+      if (progress > 0 && progress < 1) {
+        const tipAngle = arcStart + arcEnd;
+        const tx = cx + Math.cos(tipAngle) * radius;
+        const ty = cy + Math.sin(tipAngle) * radius;
+        const dotGlow = ctx.createRadialGradient(tx, ty, 0, tx, ty, radius * 0.15);
+        dotGlow.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+        dotGlow.addColorStop(0.3, 'rgba(0, 229, 255, 0.5)');
+        dotGlow.addColorStop(1, 'rgba(0, 229, 255, 0)');
+        ctx.fillStyle = dotGlow;
+        ctx.fillRect(tx - radius * 0.15, ty - radius * 0.15, radius * 0.3, radius * 0.3);
+      }
+
+      // Percentage text
+      const pct = Math.round(progress * 100);
+      const fontSize = Math.max(10, Math.round(radius * 0.40));
+      ctx.font = `bold ${fontSize}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = `rgba(0, 229, 255, ${0.8 + 0.2 * Math.sin(t / 400)})`;
+      ctx.fillText(`${pct}%`, cx, cy - fontSize * 0.15);
+
+      // Sub-label
+      const subSize = Math.max(7, Math.round(radius * 0.15));
+      ctx.font = `${subSize}px monospace`;
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.3)';
+      ctx.fillText('ACQUIRING', cx, cy + fontSize * 0.65);
     };
 
     // Initial frame
@@ -810,6 +988,7 @@ export class ZarrTesseraSource {
   private stopLoadingAnimation(ci: number, cj: number): void {
     if (!this.map) return;
     const key = this.chunkKey(ci, cj);
+    this.tileProgress.delete(key);
     const frameId = this.loadingAnimations.get(key);
     if (frameId != null) {
       cancelAnimationFrame(frameId);

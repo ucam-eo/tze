@@ -66,7 +66,10 @@ export interface EmbeddingProgress {
   ci: number;
   cj: number;
   stage: 'fetching' | 'rendering' | 'done';
-  bytes?: number; // expected total bytes
+  bytes?: number;          // expected total bytes
+  bytesLoaded?: number;    // bytes received so far
+  chunksCompleted?: number; // zarr chunks fetched
+  chunksTotal?: number;     // total zarr chunks to fetch
 }
 
 export interface ZarrTesseraEvents {

@@ -91,10 +91,13 @@ export async function openStore(url: string): Promise<ZarrStore> {
 export async function fetchRegion(
   arr: zarr.Array<zarr.DataType>,
   slices: (null | [number, number])[],
+  opts?: { onProgress?: zarr.ProgressCallback },
 ): Promise<{ data: ArrayBufferView; shape: number[] }> {
   const sel = slices.map(s =>
     s === null ? null : zarr.slice(s[0], s[1])
   );
-  const chunk = await zarr.get(arr, sel);
+  const chunk = await zarr.get(arr, sel, {
+    onProgress: opts?.onProgress,
+  });
   return chunk as { data: ArrayBufferView; shape: number[] };
 }
