@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { zarrSource, metadata } from '../stores/zarr';
   import { computeSimilarityScores, renderSimilarityOverlays, type TileSimilarity } from '../lib/similarity';
+  import UmapCloud from './UmapCloud.svelte';
 
   let threshold = $state(0.5);
   let isComputing = $state(false);
@@ -95,6 +96,10 @@
            class="flex-1 h-1" />
     <span class="text-gray-500 text-[10px] tabular-nums w-8 text-right">{threshold.toFixed(2)}</span>
   </div>
+
+  {#if cachedScores.length > 0 && refEmbedding && selectedPixel}
+    <UmapCloud {cachedScores} {refEmbedding} {selectedPixel} />
+  {/if}
 
   {#if selectedPixel}
     <div class="flex gap-1.5">

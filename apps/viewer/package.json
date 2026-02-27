@@ -15,7 +15,8 @@
     "lucide-svelte": "^0.575.0",
     "maplibre-gl": "^4.7.1",
     "onnxruntime-web": "^1.24.2",
-    "stac-js": "^0.2.1"
+    "stac-js": "^0.2.1",
+    "umap-js": "^1.4.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
