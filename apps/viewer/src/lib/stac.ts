@@ -30,6 +30,7 @@ export interface CatalogResult {
 export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Promise<CatalogResult> {
   const zones: ZoneDescriptor[] = [];
   let globalPreviewUrl: string | null = null;
+  let globalBounds: [number, number, number, number] | null = null;
 
   // 1. Fetch and parse the root catalog
   const catalogData = await fetchJson(catalogUrl, signal);
@@ -79,17 +80,23 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
   const latestYear = years[years.length - 1] ?? '2025';
   const candidateUrl = `${baseUrl}global_rgb_${latestYear}.zarr`;
   try {
-    const probe = await fetch(`${candidateUrl}/zarr.json`, { method: 'HEAD', signal });
-    if (probe.ok) {
+    const resp = await fetch(`${candidateUrl}/zarr.json`, { signal });
+    if (resp.ok) {
       globalPreviewUrl = candidateUrl;
+      // Try to read spatial bounds from the store's metadata
+      const zarrMeta = await resp.json() as Record<string, unknown>;
+      const attrs = zarrMeta.attributes as Record<string, unknown> | undefined;
+      const spatial = attrs?.spatial as { bounds?: [number, number, number, number] } | undefined;
+      if (spatial?.bounds) {
+        globalBounds = spatial.bounds;
+      }
     }
   } catch {
     // Global preview not available — that's fine
   }
 
-  // Compute global bounds from zone bboxes
-  let globalBounds: [number, number, number, number] | null = null;
-  if (zones.length > 0) {
+  // Fall back to computing bounds from zone bboxes
+  if (!globalBounds && zones.length > 0) {
     globalBounds = [
       Math.min(...zones.map(z => z.bbox[0])),
       Math.min(...zones.map(z => z.bbox[1])),

@@ -1321,6 +1321,7 @@ export class ZarrTesseraSource {
         opacity: this.opts.opacity,
         zarrVersion: 3,
         spatialDimensions: { lat: 'lat', lon: 'lon' },
+        latIsAscending: false,
     };
 
     // Provide explicit bounds so zarr-layer doesn't try to load coordinate arrays
