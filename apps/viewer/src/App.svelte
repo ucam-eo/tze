@@ -54,15 +54,15 @@
         sources: {
           basemap: {
             type: 'raster',
-            tiles: ['https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],
+            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
             tileSize: 256,
-            attribution: 'CartoDB, OSM',
+            attribution: '&copy; OpenStreetMap',
           },
         },
         layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }],
       },
-      center: [0, 20],
-      zoom: 3,
+      center: [-0.12, 51.51],
+      zoom: 6,
       preserveDrawingBuffer: true,
     });
 

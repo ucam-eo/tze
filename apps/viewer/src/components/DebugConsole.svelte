@@ -3,6 +3,7 @@
   import type { DebugLogEntry } from '@ucam-eo/maplibre-zarr-tessera';
 
   let logs = $state<DebugLogEntry[]>([]);
+  let visible = $state(false);
   let expanded = $state(true);
   let logContainer = $state<HTMLDivElement>(undefined!);
 
@@ -55,7 +56,7 @@
     }
   });
 
-  // Summary stats — computed once when logs change
+  // Summary stats
   const stats = $derived.by(() => {
     const counts = { fetch: 0, render: 0, error: 0 };
     for (const l of logs) {
@@ -80,57 +81,78 @@
   }
 </script>
 
-<div class="absolute bottom-2 left-2 right-[260px] z-10 font-mono select-none"
-     style="max-width: calc(100vw - 280px);">
-  <!-- Toggle bar -->
+<!-- Mobile: discrete toggle button (bottom-left corner) -->
+{#if !visible}
   <button
-    onclick={() => expanded = !expanded}
-    class="flex items-center gap-3 bg-black/85 backdrop-blur-sm text-[10px]
-           px-3 py-1.5 rounded-t border border-gray-800/60 border-b-0
-           hover:bg-gray-900/90 transition-colors cursor-pointer w-full text-left"
-  >
-    <span class="text-gray-600">{expanded ? '▼' : '▲'}</span>
-    <span class="text-gray-500 uppercase tracking-wider">Debug</span>
-    <span class="text-yellow-400/60 tabular-nums">{stats.fetch}F</span>
-    <span class="text-green-400/60 tabular-nums">{stats.render}R</span>
-    {#if stats.error > 0}
-      <span class="text-red-400 tabular-nums">{stats.error}E</span>
-    {/if}
-    <span class="text-gray-700 ml-auto tabular-nums">{logs.length}</span>
-  </button>
-  {#if expanded}
-    <div class="flex items-center bg-black/90 border-x border-gray-800/60 px-3 py-1">
-      <button
-        onclick={copyLogs}
-        class="px-2 py-0.5 rounded text-[9px] border cursor-pointer
-               {copied ? 'text-green-400 border-green-800' : 'text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600'}"
-      >{copied ? 'copied!' : 'copy logs'}</button>
-      <button
-        onclick={() => { logs = []; }}
-        class="ml-2 px-2 py-0.5 rounded text-[9px] border cursor-pointer
-               text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600"
-      >clear</button>
-    </div>
-  {/if}
-
-  {#if expanded}
-    <div
-      bind:this={logContainer}
-      class="bg-black/90 backdrop-blur-sm border border-gray-800/60
-             rounded-b overflow-y-auto text-[10px] leading-relaxed"
-      style="max-height: 200px;"
+    onclick={() => { visible = true; }}
+    class="absolute bottom-2 left-2 z-10 bg-black/70 backdrop-blur-sm
+           text-gray-600 hover:text-gray-400 text-[10px] font-mono
+           w-7 h-7 flex items-center justify-center rounded
+           border border-gray-800/60 hover:border-gray-700 transition-colors
+           cursor-pointer select-none"
+    title="Show debug console"
+  >&gt;_</button>
+{:else}
+  <div class="absolute bottom-2 left-2 z-10 font-mono select-none"
+       style="right: 260px; max-width: calc(100vw - 280px);">
+    <!-- Toggle bar -->
+    <button
+      onclick={() => expanded = !expanded}
+      class="flex items-center gap-3 bg-black/85 backdrop-blur-sm text-[10px]
+             px-3 py-1.5 rounded-t border border-gray-800/60 border-b-0
+             hover:bg-gray-900/90 transition-colors cursor-pointer w-full text-left"
     >
-      {#if logs.length === 0}
-        <div class="px-3 py-2 text-gray-700 italic">Load a store to see activity...</div>
-      {:else}
-        {#each logs as entry}
-          <div class="px-3 py-0.5 hover:bg-gray-900/50 flex gap-2 whitespace-nowrap overflow-hidden">
-            <span class="text-gray-700 tabular-nums shrink-0">{formatTime(entry.time)}</span>
-            <span class="{TYPE_COLORS[entry.type]} shrink-0 w-[38px]">{TYPE_LABELS[entry.type]}</span>
-            <span class="text-gray-400 truncate">{entry.msg}</span>
-          </div>
-        {/each}
+      <span class="text-gray-600">{expanded ? '▼' : '▲'}</span>
+      <span class="text-gray-500 uppercase tracking-wider">Debug</span>
+      <span class="text-yellow-400/60 tabular-nums">{stats.fetch}F</span>
+      <span class="text-green-400/60 tabular-nums">{stats.render}R</span>
+      {#if stats.error > 0}
+        <span class="text-red-400 tabular-nums">{stats.error}E</span>
       {/if}
-    </div>
-  {/if}
-</div>
+      <span class="text-gray-700 tabular-nums ml-auto">{logs.length}</span>
+      <span
+        role="button"
+        tabindex="0"
+        onclick={(e) => { e.stopPropagation(); visible = false; expanded = true; }}
+        onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); visible = false; expanded = true; }}}
+        class="text-gray-700 hover:text-red-400 text-[10px] ml-1 transition-colors cursor-pointer"
+        title="Hide debug console"
+      >✕</span>
+    </button>
+    {#if expanded}
+      <div class="flex items-center bg-black/90 border-x border-gray-800/60 px-3 py-1">
+        <button
+          onclick={copyLogs}
+          class="px-2 py-0.5 rounded text-[9px] border cursor-pointer
+                 {copied ? 'text-green-400 border-green-800' : 'text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600'}"
+        >{copied ? 'copied!' : 'copy logs'}</button>
+        <button
+          onclick={() => { logs = []; }}
+          class="ml-2 px-2 py-0.5 rounded text-[9px] border cursor-pointer
+                 text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600"
+        >clear</button>
+      </div>
+    {/if}
+
+    {#if expanded}
+      <div
+        bind:this={logContainer}
+        class="bg-black/90 backdrop-blur-sm border border-gray-800/60
+               rounded-b overflow-y-auto text-[10px] leading-relaxed"
+        style="max-height: 200px;"
+      >
+        {#if logs.length === 0}
+          <div class="px-3 py-2 text-gray-700 italic">Load a store to see activity...</div>
+        {:else}
+          {#each logs as entry}
+            <div class="px-3 py-0.5 hover:bg-gray-900/50 flex gap-2 whitespace-nowrap overflow-hidden">
+              <span class="text-gray-700 tabular-nums shrink-0">{formatTime(entry.time)}</span>
+              <span class="{TYPE_COLORS[entry.type]} shrink-0 w-[38px]">{TYPE_LABELS[entry.type]}</span>
+              <span class="text-gray-400 truncate">{entry.msg}</span>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    {/if}
+  </div>
+{/if}

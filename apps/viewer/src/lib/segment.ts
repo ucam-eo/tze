@@ -1,8 +1,9 @@
 import * as ort from 'onnxruntime-web';
 import type { TileEmbeddings, ZarrTesseraSource } from '@ucam-eo/maplibre-zarr-tessera';
 
-// Configure WASM paths for onnxruntime-web
-ort.env.wasm.wasmPaths = '/ort-wasm/';
+// Configure WASM paths for onnxruntime-web (relative to deploy base)
+const base = import.meta.env.BASE_URL;
+ort.env.wasm.wasmPaths = `${base}ort-wasm/`;
 // Disable multithreading to avoid SharedArrayBuffer requirement (needs COOP/COEP headers)
 ort.env.wasm.numThreads = 1;
 
@@ -34,7 +35,7 @@ const probabilityCache = new Map<string, {
 async function getSession(): Promise<ort.InferenceSession> {
   if (cachedSession) return cachedSession;
   try {
-    cachedSession = await ort.InferenceSession.create('/models/solar_unet.onnx', {
+    cachedSession = await ort.InferenceSession.create(`${base}models/solar_unet.onnx`, {
       executionProviders: ['wasm'],
     });
   } catch (err) {
@@ -45,7 +46,7 @@ async function getSession(): Promise<ort.InferenceSession> {
 
 async function getStats(): Promise<ModelStats> {
   if (cachedStats) return cachedStats;
-  const resp = await fetch('/models/solar_unet_stats.json');
+  const resp = await fetch(`${base}models/solar_unet_stats.json`);
   if (!resp.ok) throw new Error(`Failed to fetch stats: ${resp.status} ${resp.statusText}`);
   cachedStats = await resp.json();
   return cachedStats!;

@@ -1,16 +1,15 @@
 <script lang="ts">
-  import { Map as MapIcon, Globe, Mountain, Moon, Grid3x3, Square } from 'lucide-svelte';
+  import { Map as MapIcon, Globe, Moon, Grid3x3, Square } from 'lucide-svelte';
   import { mapInstance } from '../stores/map';
   import { zarrSource, gridVisible, utmBoundaryVisible } from '../stores/zarr';
 
   const BASEMAPS = [
     { id: 'osm', label: 'Streets', icon: MapIcon, tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], attribution: '&copy; OpenStreetMap' },
     { id: 'satellite', label: 'Satellite', icon: Globe, tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], attribution: 'Esri, Maxar' },
-    { id: 'terrain', label: 'Terrain', icon: Mountain, tiles: ['https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}.png'], attribution: 'Stadia Maps, Stamen' },
     { id: 'dark', label: 'Dark', icon: Moon, tiles: ['https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'], attribution: 'CartoDB, OSM' },
   ] as const;
 
-  let selected = $state('dark');
+  let selected = $state('osm');
 
   function switchBasemap(id: string) {
     const map = $mapInstance;
@@ -27,10 +26,12 @@
       tileSize: 256,
       attribution: bm.attribution,
     });
-    const firstLayer = map.getStyle().layers[0];
+    // Insert basemap at the very bottom of the layer stack
+    const layers = map.getStyle().layers;
+    const bottomLayerId = layers.length > 0 ? layers[0].id : undefined;
     map.addLayer(
       { id: 'basemap', type: 'raster', source: 'basemap' },
-      firstLayer?.id,
+      bottomLayerId,
     );
   }
 

@@ -51,6 +51,7 @@ function ortWasmPlugin() {
 }
 
 export default defineConfig({
+  base: './',
   plugins: [svelte(), tailwindcss(), ortWasmPlugin()],
   server: {
     proxy: {

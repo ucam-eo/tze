@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadCatalog } from '../lib/stac';
+  import { loadCatalog, pointInBbox } from '../lib/stac';
   import {
-    catalogUrl, zones, activeZoneId, catalogStatus, catalogError,
+    catalogUrl, zones, activeZoneId, catalogStatus, catalogError, switchZone,
   } from '../stores/stac';
+  import { mapInstance } from '../stores/map';
   import { status, globalPreviewUrl, globalPreviewBounds } from '../stores/zarr';
 
   interface Props {
@@ -42,6 +43,18 @@
       $globalPreviewBounds = result.globalBounds;
       $catalogStatus = 'loaded';
       $status = `${result.zones.length} zones discovered${result.globalPreviewUrl ? ' (global preview available)' : ''}`;
+
+      // Auto-switch to the zone under the current map center
+      const map = $mapInstance;
+      if (map && result.zones.length > 0) {
+        const center = map.getCenter();
+        for (const zone of result.zones) {
+          if (pointInBbox(center.lng, center.lat, zone.bbox)) {
+            switchZone(zone.id);
+            break;
+          }
+        }
+      }
     } catch (err) {
       $catalogStatus = 'error';
       $catalogError = (err as Error).message;

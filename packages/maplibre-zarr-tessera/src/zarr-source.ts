@@ -30,6 +30,11 @@ export class ZarrTesseraSource {
   public embeddingCache = new Map<string, TileEmbeddings>();
   private moveHandler: (() => void) | null = null;
   private dblclickHandler: ((e: { preventDefault(): void; lngLat: { lng: number; lat: number } }) => void) | null = null;
+  /** Long-press handler for mobile (alternative to double-click). */
+  private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+  private touchStartHandler: ((e: TouchEvent) => void) | null = null;
+  private touchEndHandler: (() => void) | null = null;
+  private touchMoveHandler: (() => void) | null = null;
   private listeners = new Map<string, Set<EventCallback<unknown>>>();
   /** Tracks active loading animations per chunk key → animation frame ID. */
   private loadingAnimations = new Map<string, number>();
@@ -83,20 +88,39 @@ export class ZarrTesseraSource {
       this.moveHandler = () => this.updateVisibleChunks();
       map.on('moveend', this.moveHandler);
 
-      // Double-click to load full embeddings for a tile
+      // Disable MapLibre's double-click zoom — we use double-click (desktop)
+      // and long-press (mobile) to load embeddings instead.
+      map.doubleClickZoom.disable();
+
+      // Double-click to load full embeddings for a tile (desktop)
       this.dblclickHandler = (e) => {
         e.preventDefault();
-        const chunk = this.getChunkAtLngLat(e.lngLat.lng, e.lngLat.lat);
-        if (!chunk) return;
-        const key = this.chunkKey(chunk.ci, chunk.cj);
-        if (this.embeddingCache.has(key)) {
-          this.debug('info', `Chunk (${chunk.ci},${chunk.cj}) embeddings already loaded`);
-          return;
-        }
-        this.debug('fetch', `Double-click: loading embeddings for chunk (${chunk.ci},${chunk.cj})`);
-        this.loadFullChunk(chunk.ci, chunk.cj);
+        this.triggerEmbeddingLoad(e.lngLat.lng, e.lngLat.lat);
       };
       map.on('dblclick', this.dblclickHandler);
+
+      // Long-press (500ms) to load embeddings on mobile
+      const canvas = map.getCanvasContainer();
+      this.touchStartHandler = (e: TouchEvent) => {
+        if (e.touches.length !== 1) return;
+        this.longPressTimer = setTimeout(() => {
+          this.longPressTimer = null;
+          const touch = e.touches[0];
+          if (!touch) return;
+          // Convert touch point to lng/lat via MapLibre
+          const lngLat = map.unproject([touch.clientX, touch.clientY]);
+          this.triggerEmbeddingLoad(lngLat.lng, lngLat.lat);
+        }, 500);
+      };
+      this.touchEndHandler = () => {
+        if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = null; }
+      };
+      this.touchMoveHandler = () => {
+        if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = null; }
+      };
+      canvas.addEventListener('touchstart', this.touchStartHandler, { passive: true });
+      canvas.addEventListener('touchend', this.touchEndHandler);
+      canvas.addEventListener('touchmove', this.touchMoveHandler, { passive: true });
 
       // Load visible chunks immediately
       this.updateVisibleChunks();
@@ -104,6 +128,19 @@ export class ZarrTesseraSource {
       this.emit('error', err instanceof Error ? err : new Error(String(err)));
       throw err;
     }
+  }
+
+  /** Shared logic for loading embeddings at a map coordinate (desktop dblclick + mobile long-press). */
+  private triggerEmbeddingLoad(lng: number, lat: number): void {
+    const chunk = this.getChunkAtLngLat(lng, lat);
+    if (!chunk) return;
+    const key = this.chunkKey(chunk.ci, chunk.cj);
+    if (this.embeddingCache.has(key)) {
+      this.debug('info', `Chunk (${chunk.ci},${chunk.cj}) embeddings already loaded`);
+      return;
+    }
+    this.debug('fetch', `Loading embeddings for chunk (${chunk.ci},${chunk.cj})`);
+    this.loadFullChunk(chunk.ci, chunk.cj);
   }
 
   remove(): void {
@@ -123,6 +160,14 @@ export class ZarrTesseraSource {
     if (this.dblclickHandler && this.map) {
       this.map.off('dblclick', this.dblclickHandler);
     }
+    // Clean up mobile long-press handlers
+    if (this.map) {
+      const canvas = this.map.getCanvasContainer();
+      if (this.touchStartHandler) canvas.removeEventListener('touchstart', this.touchStartHandler);
+      if (this.touchEndHandler) canvas.removeEventListener('touchend', this.touchEndHandler);
+      if (this.touchMoveHandler) canvas.removeEventListener('touchmove', this.touchMoveHandler);
+    }
+    if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = null; }
     this.currentAbort?.abort();
     for (const [, frameId] of this.loadingAnimations) cancelAnimationFrame(frameId);
     this.loadingAnimations.clear();
@@ -149,7 +194,11 @@ export class ZarrTesseraSource {
   setOpacity(opacity: number): void {
     this.opts.opacity = opacity;
     if (!this.map) return;
-    // Update ALL chunk raster layers on the map (preview + embedding)
+    // Update the global preview layer (RGB/PCA background)
+    if (this.previewLayer) {
+        this.previewLayer.setOpacity(opacity);
+    }
+    // Update embedding chunk layers (loaded via double-click)
     const style = this.map.getStyle();
     if (!style?.layers) return;
     for (const layer of style.layers) {
@@ -157,20 +206,19 @@ export class ZarrTesseraSource {
         this.map.setPaintProperty(layer.id, 'raster-opacity', opacity);
       }
     }
-    if (this.previewLayer) {
-        this.previewLayer.setOpacity(opacity);
-    }
   }
 
   setPreview(mode: PreviewMode): void {
     this.opts.preview = mode;
-    // Clear cache and reload with new preview mode
-    for (const [key] of this.chunkCache) this.removeChunkFromMap(key);
-    this.chunkCache.clear();
-    this.updateVisibleChunks();
     if (this.previewLayer && this.opts.globalPreviewUrl) {
+        // Global preview layer handles mode switch directly
         const newVar = mode === 'pca' ? 'pca_rgb' : 'rgb';
         this.previewLayer.setVariable(newVar);
+    } else {
+        // Legacy path: clear cache and reload with new preview mode
+        for (const [key] of this.chunkCache) this.removeChunkFromMap(key);
+        this.chunkCache.clear();
+        this.updateVisibleChunks();
     }
   }
 
@@ -199,18 +247,28 @@ export class ZarrTesseraSource {
     // Re-add overlays (removes first if present)
     this.addOverlays();
 
-    // Re-add cached chunk layers that were on the map
-    for (const [, entry] of this.chunkCache) {
-      if (entry.canvas) {
-        // Remove stale refs
-        entry.sourceId = null;
-        entry.layerId = null;
-        const ids = this.addChunkToMap(entry.ci, entry.cj, entry.canvas);
-        entry.sourceId = ids.sourceId;
-        entry.layerId = ids.layerId;
-      }
+    // Re-add the global preview layer if configured
+    if (this.opts.globalPreviewUrl) {
+      this.previewLayer = null; // stale after basemap switch
+      this.addPreviewLayer();
     }
-    this.debug('overlay', `Re-added ${this.chunkCache.size} cached chunks`);
+
+    // Re-add embedding chunk layers (skip legacy preview-only chunks
+    // when the global preview layer handles RGB)
+    let reAdded = 0;
+    for (const [, entry] of this.chunkCache) {
+      if (!entry.canvas) continue;
+      // When the preview layer is active, only re-add embedding tiles
+      // (those loaded via double-click that have raw embedding data)
+      if (this.previewLayer && entry.isPreview) continue;
+      entry.sourceId = null;
+      entry.layerId = null;
+      const ids = this.addChunkToMap(entry.ci, entry.cj, entry.canvas);
+      entry.sourceId = ids.sourceId;
+      entry.layerId = ids.layerId;
+      reAdded++;
+    }
+    this.debug('overlay', `Re-added ${reAdded} cached chunk layers`);
   }
 
   /** Load full embedding data for a specific chunk (for band exploration). */
@@ -1109,8 +1167,9 @@ export class ZarrTesseraSource {
 
   private async updateVisibleChunks(): Promise<void> {
     if (!this.store || !this.map) return;
-    // When zarr-layer handles preview, skip legacy chunk loading
-    // (double-click embedding loading via loadFullChunk is separate)
+    // When the global preview layer handles RGB/PCA rendering, the legacy
+    // per-chunk loading is unnecessary.  Embedding tiles are loaded separately
+    // via loadFullChunk (double-click) and always use zarr-chunk-lyr layers.
     if (this.previewLayer) return;
     this.currentAbort?.abort();
     const abort = this.currentAbort = new AbortController();
@@ -1422,6 +1481,14 @@ export class ZarrTesseraSource {
         this.previewLayer = new ZarrLayer(layerOpts as any);
         this.map.addLayer(this.previewLayer as any);
         this.debug('info', `Preview layer added via zarr-layer (${previewVar})`);
+
+        // Remove legacy preview chunk layers — the global preview layer
+        // now handles RGB/PCA rendering.  Keep embedding chunks (isPreview=false).
+        for (const [key, entry] of this.chunkCache) {
+            if (entry.isPreview) {
+                this.removeChunkFromMap(key);
+            }
+        }
     } catch (err) {
         this.debug('error', `Failed to add preview layer: ${(err as Error).message}`);
         this.previewLayer = null;
