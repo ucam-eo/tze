@@ -18,7 +18,9 @@
   import { pointInBbox } from './lib/stac';
   import { segmentPolygons, segmentVisible } from './stores/segmentation';
   import UmapCloud from './components/UmapCloud.svelte';
+  import TutorialOverlay from './components/TutorialOverlay.svelte';
   import { simEmbeddingTileCount } from './stores/similarity';
+  import { registerAllTutorials } from './lib/tutorials/index';
 
   let mapContainer: HTMLDivElement;
   let labelMarkers: maplibregl.Marker[] = [];
@@ -47,6 +49,8 @@
   let osmModalOpen = $state(false);
 
   onMount(() => {
+    registerAllTutorials();
+
     const map = new maplibregl.Map({
       container: mapContainer,
       style: {
@@ -69,16 +73,45 @@
     map.on('load', () => {
       $mapInstance = map;
 
-      // Add hover highlight layer (initially empty)
+      // Add hover highlight layers (initially empty)
       map.addSource('tile-hover', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       });
+      // Semi-transparent fill so the tile stands out
+      map.addLayer({
+        id: 'tile-hover-fill',
+        type: 'fill',
+        source: 'tile-hover',
+        paint: {
+          'fill-color': '#000000',
+          'fill-opacity': 0.15,
+          'fill-opacity-transition': { duration: 200 },
+        },
+      });
+      // Thick black outer stroke
+      map.addLayer({
+        id: 'tile-hover-line-outer',
+        type: 'line',
+        source: 'tile-hover',
+        paint: {
+          'line-color': '#000000',
+          'line-width': 5,
+          'line-opacity': 0.8,
+          'line-opacity-transition': { duration: 200 },
+        },
+      });
+      // Thin cyan inner stroke
       map.addLayer({
         id: 'tile-hover-line',
         type: 'line',
         source: 'tile-hover',
-        paint: { 'line-color': '#00e5ff', 'line-width': 2, 'line-opacity': 0.7 },
+        paint: {
+          'line-color': '#00e5ff',
+          'line-width': 2,
+          'line-opacity': 0.9,
+          'line-opacity-transition': { duration: 200 },
+        },
       });
 
       // Segmentation polygon layers
@@ -102,6 +135,7 @@
 
     // Track hovered chunk to avoid redundant updates
     let hoveredChunkKey = '';
+    let hoverFadeTimer: ReturnType<typeof setTimeout> | undefined;
 
     // Coordinates display + tile hover highlight
     map.on('mousemove', (e) => {
@@ -119,6 +153,12 @@
           if (chunk) {
             const corners = src.getChunkBoundsLngLat(chunk.ci, chunk.cj);
             if (corners) {
+              // Cancel any pending fade-out clear
+              clearTimeout(hoverFadeTimer);
+              // Restore full opacity
+              map.setPaintProperty('tile-hover-fill', 'fill-opacity', 0.15);
+              map.setPaintProperty('tile-hover-line-outer', 'line-opacity', 0.8);
+              map.setPaintProperty('tile-hover-line', 'line-opacity', 0.9);
               hoverSource.setData({
                 type: 'FeatureCollection',
                 features: [{
@@ -132,7 +172,14 @@
               });
             }
           } else {
-            hoverSource.setData({ type: 'FeatureCollection', features: [] });
+            // Moved off tiles — fade out
+            map.setPaintProperty('tile-hover-fill', 'fill-opacity', 0);
+            map.setPaintProperty('tile-hover-line-outer', 'line-opacity', 0);
+            map.setPaintProperty('tile-hover-line', 'line-opacity', 0);
+            clearTimeout(hoverFadeTimer);
+            hoverFadeTimer = setTimeout(() => {
+              hoverSource.setData({ type: 'FeatureCollection', features: [] });
+            }, 250);
           }
         }
       }
@@ -196,11 +243,19 @@
       tip.style.display = 'none';
     });
 
-    // Clear hover when mouse leaves the map
+    // Fade out hover when mouse leaves the map
     map.on('mouseout', () => {
       hoveredChunkKey = '';
-      const hoverSource = map.getSource('tile-hover') as maplibregl.GeoJSONSource | undefined;
-      if (hoverSource) hoverSource.setData({ type: 'FeatureCollection', features: [] });
+      // Fade opacity to 0 via transitions
+      map.setPaintProperty('tile-hover-fill', 'fill-opacity', 0);
+      map.setPaintProperty('tile-hover-line-outer', 'line-opacity', 0);
+      map.setPaintProperty('tile-hover-line', 'line-opacity', 0);
+      // Clear data after the transition completes
+      clearTimeout(hoverFadeTimer);
+      hoverFadeTimer = setTimeout(() => {
+        const hoverSource = map.getSource('tile-hover') as maplibregl.GeoJSONSource | undefined;
+        if (hoverSource) hoverSource.setData({ type: 'FeatureCollection', features: [] });
+      }, 250);
     });
 
     // Map click — dispatched based on active tool
@@ -375,6 +430,9 @@
 
 <!-- UMAP floating window (outside sidebar to avoid backdrop-filter clipping) -->
 <UmapCloud visible={$activeTool === 'similarity' && $simEmbeddingTileCount > 0} />
+
+<!-- Tutorial overlay -->
+<TutorialOverlay {similarityRef} />
 
 <!-- Debug console -->
 <DebugConsole />

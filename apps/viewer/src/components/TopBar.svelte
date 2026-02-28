@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { ChevronDown, Database, MapPin, Search, Crosshair } from 'lucide-svelte';
+  import { ChevronDown, Search, Crosshair } from 'lucide-svelte';
   import { zones, activeZoneId, catalogStatus, switchZone } from '../stores/stac';
   import { metadata, loading } from '../stores/zarr';
   import { mapInstance } from '../stores/map';
   import { get } from 'svelte/store';
+  import TutorialDropdown from './TutorialDropdown.svelte';
 
   interface Props {
     onOpenCatalog: () => void;
@@ -148,63 +149,8 @@
     <span class="text-term-cyan text-[11px] font-bold tracking-[0.2em] uppercase">TZE</span>
   </div>
 
-  <!-- Zone dropdown -->
-  <div class="relative">
-    <button
-      onclick={() => { zoneDropdownOpen = !zoneDropdownOpen; }}
-      disabled={$zones.length === 0}
-      class="flex items-center gap-1.5 px-2 py-1 rounded
-             text-gray-300 hover:bg-gray-800/60 transition-colors
-             disabled:opacity-40 disabled:cursor-default"
-    >
-      <MapPin size={12} class="text-term-cyan" />
-      <span class="text-[11px]">
-        {activeZone ? `UTM ${activeZone.utmZone}` : 'No zone'}
-      </span>
-      <ChevronDown size={12} class="text-gray-500" />
-    </button>
-
-    {#if zoneDropdownOpen}
-      <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-      <div class="fixed inset-0 z-30" onclick={() => { zoneDropdownOpen = false; }}></div>
-      <div class="absolute top-full left-0 mt-1 z-40
-                  bg-gray-950 border border-gray-700/80 rounded shadow-xl
-                  min-w-[140px] py-1">
-        {#each $zones as zone}
-          <button
-            onclick={() => handleZoneClick(zone.id)}
-            class="flex items-center gap-2 w-full text-left px-3 py-1.5
-                   text-[11px] transition-colors
-                   {zone.id === $activeZoneId
-                     ? 'text-term-cyan bg-term-cyan/10'
-                     : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}"
-          >
-            <span class="w-1.5 h-1.5 rounded-full shrink-0
-                         {zone.id === $activeZoneId ? 'bg-term-cyan' : 'bg-gray-600'}"></span>
-            UTM {zone.utmZone}
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <!-- Metadata pills (visible when a zone is loaded) -->
-  {#if $metadata}
-    <div class="flex items-center gap-2 text-[10px] text-gray-500">
-      <span class="text-gray-600">EPSG:{$metadata.epsg}</span>
-      <span class="text-gray-700">|</span>
-      <span class="text-gray-600">{$metadata.shape[1]}x{$metadata.shape[0]}px</span>
-      <span class="text-gray-700">|</span>
-      <span class="text-gray-600">{$metadata.nBands}b</span>
-      {#if $loading.total > 0}
-        <span class="text-gray-700">|</span>
-        <span class="text-term-cyan/60 tabular-nums">{$loading.done}/{$loading.total}</span>
-      {/if}
-    </div>
-  {/if}
-
   <!-- Search bar -->
-  <div class="relative flex items-center gap-1">
+  <div class="relative flex items-center gap-1" data-tutorial="search-bar">
     <div class="relative flex items-center">
       <Search size={11} class="absolute left-1.5 text-gray-600 pointer-events-none" />
       <input
@@ -215,9 +161,10 @@
         onfocus={() => { if (searchResults.length > 0) searchOpen = true; }}
         type="text"
         placeholder="Search location..."
-        class="w-[160px] h-6 pl-6 pr-2 rounded bg-gray-900/80 border border-gray-700/60
+        class="w-[220px] h-6 pl-6 pr-2 rounded bg-gray-900/80 border border-term-cyan/30
                text-[11px] text-gray-300 placeholder-gray-600
                focus:border-term-cyan/50 focus:outline-none focus:ring-0
+               focus:shadow-[0_0_8px_rgba(0,229,255,0.15)]
                transition-colors font-mono"
       />
       {#if searchLoading}
@@ -231,7 +178,7 @@
       disabled={locating}
       class="flex items-center justify-center w-6 h-6 rounded
              border border-gray-700/60 bg-gray-900/80
-             text-gray-500 hover:text-term-cyan hover:border-term-cyan/50
+             text-term-cyan/60 hover:text-term-cyan hover:border-term-cyan/50
              disabled:opacity-40 transition-colors"
       title="Go to current location"
     >
@@ -252,7 +199,6 @@
                    text-[11px] text-gray-400 hover:text-gray-200 hover:bg-gray-800/50
                    transition-colors"
           >
-            <MapPin size={10} class="text-gray-600 shrink-0" />
             <span class="truncate">{formatResult(result.display_name)}</span>
           </button>
         {/each}
@@ -263,19 +209,84 @@
   <!-- Spacer -->
   <div class="flex-1"></div>
 
-  <!-- Health indicator -->
-  <div class="flex items-center gap-1.5">
-    <div class="w-2 h-2 rounded-full {healthColor}"></div>
-    <span class="text-[10px] text-gray-500">{healthLabel}</span>
-  </div>
+  <!-- Tutorial dropdown -->
+  <TutorialDropdown />
 
-  <!-- Catalog button -->
-  <button
-    onclick={onOpenCatalog}
-    class="flex items-center gap-1.5 px-2 py-1 rounded
-           text-gray-400 hover:text-term-cyan hover:bg-gray-800/60 transition-colors"
-    title="Open catalog connection"
-  >
-    <Database size={13} />
-  </button>
+  <!-- Unified zone / status button -->
+  <div class="relative">
+    <button
+      onclick={() => { zoneDropdownOpen = !zoneDropdownOpen; }}
+      class="flex items-center gap-1.5 px-2 py-1 rounded
+             text-gray-300 hover:bg-gray-800/60 transition-colors"
+    >
+      <div class="w-2 h-2 rounded-full {healthColor}"></div>
+      <span class="text-[11px]">
+        {#if activeZone}
+          UTM {activeZone.utmZone}
+        {:else if $catalogStatus === 'loading'}
+          Loading...
+        {:else if $catalogStatus === 'error'}
+          Error
+        {:else}
+          Connect
+        {/if}
+      </span>
+      {#if $metadata}
+        <span class="text-[10px] text-gray-600">EPSG:{$metadata.epsg}</span>
+        <span class="text-[10px] text-gray-600">{$metadata.nBands}b</span>
+        {#if $loading.total > 0}
+          <span class="text-[10px] text-term-cyan/60 tabular-nums">{$loading.done}/{$loading.total}</span>
+        {/if}
+      {/if}
+      <ChevronDown size={12} class="text-gray-500" />
+    </button>
+
+    {#if zoneDropdownOpen}
+      <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+      <div class="fixed inset-0 z-30" onclick={() => { zoneDropdownOpen = false; }}></div>
+      <div class="absolute top-full right-0 mt-1 z-40
+                  bg-gray-950 border border-gray-700/80 rounded shadow-xl
+                  min-w-[180px] py-1">
+
+        <!-- Zone list -->
+        {#each $zones as zone}
+          <button
+            onclick={() => handleZoneClick(zone.id)}
+            class="flex items-center gap-2 w-full text-left px-3 py-1.5
+                   text-[11px] transition-colors
+                   {zone.id === $activeZoneId
+                     ? 'text-term-cyan bg-term-cyan/10'
+                     : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}"
+          >
+            <span class="w-1.5 h-1.5 rounded-full shrink-0
+                         {zone.id === $activeZoneId ? 'bg-green-400' : 'bg-gray-600'}"></span>
+            UTM {zone.utmZone}
+          </button>
+        {/each}
+
+        <!-- Metadata info -->
+        {#if $metadata}
+          <div class="border-t border-gray-800/60 mt-1 pt-1 px-3 py-1.5">
+            <div class="flex flex-col gap-0.5 text-[10px] text-gray-500">
+              <span>EPSG:{$metadata.epsg}</span>
+              <span>{$metadata.shape[1]} x {$metadata.shape[0]} px</span>
+              <span>{$metadata.nBands} bands</span>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Catalog settings -->
+        <div class="border-t border-gray-800/60 mt-1 pt-1">
+          <button
+            onclick={() => { zoneDropdownOpen = false; onOpenCatalog(); }}
+            class="flex items-center gap-2 w-full text-left px-3 py-1.5
+                   text-[11px] text-gray-400 hover:text-gray-200 hover:bg-gray-800/50
+                   transition-colors"
+          >
+            Catalog Settings...
+          </button>
+        </div>
+      </div>
+    {/if}
+  </div>
 </div>

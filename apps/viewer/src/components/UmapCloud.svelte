@@ -214,6 +214,7 @@
 <div
   class="umap-window"
   class:umap-hidden={!visible}
+  data-tutorial="umap-cloud"
   style:left="{winX}px"
   style:top="{winY}px"
   style:width="{winW}px"
@@ -221,6 +222,10 @@
 >
   <div class="umap-titlebar" onmousedown={startDrag}>
     <span class="text-[10px] text-gray-400 select-none">UMAP</span>
+    {#if $simSelectedPixel}
+      <span class="text-[9px] text-gray-500 select-none">ref ({$simSelectedPixel.ci},{$simSelectedPixel.cj}) [{$simSelectedPixel.row},{$simSelectedPixel.col}]</span>
+    {/if}
+    <span class="flex-1"></span>
     <span class="text-[9px] text-gray-600 select-none">{status}</span>
   </div>
 
@@ -228,7 +233,7 @@
     <canvas bind:this={canvasEl} class="umap-canvas"></canvas>
   </div>
 
-  <div class="umap-footer">
+  <div class="umap-footer" data-tutorial="umap-threshold">
     <span class="text-gray-500 text-[10px] shrink-0">Thresh</span>
     <input type="range" min="0" max="100"
            value={Math.round($simThreshold * 100)}

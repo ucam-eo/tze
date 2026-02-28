@@ -85,16 +85,11 @@
     if (get(simScores).length > 0) applyThreshold();
   });
 
-  function updateThreshold(val: number) {
-    $simThreshold = val;
-  }
 </script>
 
-<div class="space-y-3">
+<div class="space-y-3" data-tutorial="similarity-panel">
   {#if $simSelectedPixel}
-    <div class="text-[10px] text-gray-500">
-      Reference: <span class="text-gray-300">({$simSelectedPixel.ci},{$simSelectedPixel.cj}) px [{$simSelectedPixel.row},{$simSelectedPixel.col}]</span>
-    </div>
+    <div class="text-[10px] text-gray-600 italic">Reference pixel selected — see UMAP window</div>
   {:else if $simEmbeddingTileCount > 0}
     <div class="text-[10px] text-gray-600 italic">Click a pixel to select reference</div>
   {:else}
@@ -102,14 +97,6 @@
       Double-click a tile to load embeddings, then click any pixel to find similar ones.
     </div>
   {/if}
-
-  <div class="flex items-center gap-1.5">
-    <span class="text-gray-600 text-[10px] shrink-0">Thresh</span>
-    <input type="range" min="0" max="100" value={Math.round($simThreshold * 100)}
-           oninput={(e) => updateThreshold(parseInt((e.target as HTMLInputElement).value) / 100)}
-           class="flex-1 h-1 min-w-0" />
-    <span class="text-gray-500 text-[10px] tabular-nums w-7 text-right">{$simThreshold.toFixed(2)}</span>
-  </div>
 
   {#if $simSelectedPixel}
     <div class="flex gap-1.5">

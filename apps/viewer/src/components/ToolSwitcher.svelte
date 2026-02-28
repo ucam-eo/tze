@@ -23,7 +23,7 @@
   }
 </script>
 
-<div class="transition-opacity"
+<div class="transition-opacity" data-tutorial="tool-switcher"
      class:opacity-40={!enabled} class:pointer-events-none={!enabled}>
 
   <!-- Tool tabs -->
