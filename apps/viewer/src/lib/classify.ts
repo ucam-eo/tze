@@ -19,8 +19,8 @@ export interface ClassifyProgress {
   pixelsTotal: number;
 }
 
-/** Callback fired after each GPU chunk with the updated canvas. */
-export type OnBatchUpdate = (ci: number, cj: number, canvas: HTMLCanvasElement) => void;
+/** Callback fired after each GPU chunk with the updated canvas and class map. */
+export type OnBatchUpdate = (ci: number, cj: number, canvas: HTMLCanvasElement, classMap: Int16Array, width: number, height: number) => void;
 
 /** L2-normalise rows of a 2D tensor: x / ||x||₂  (functional API only) */
 function l2Normalise(x: tf.Tensor2D): tf.Tensor2D {
@@ -197,7 +197,7 @@ export async function classifyTiles(
       const imgData = ctx.createImageData(width, height);
       imgData.data.set(rgba);
       ctx.putImageData(imgData, 0, 0);
-      onBatchUpdate?.(ci, cj, canvas);
+      onBatchUpdate?.(ci, cj, canvas, classMap, width, height);
 
       pixelsDone += chunkSize;
       onProgress?.({ tilesDone, tilesTotal, pixelsDone, pixelsTotal: totalValidPixels });

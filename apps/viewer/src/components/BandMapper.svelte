@@ -13,7 +13,7 @@
   const enabled = $derived(!!$metadata);
 </script>
 
-<div class="px-4 py-3 border-b border-gray-800/60 transition-opacity"
+<div class="px-3 py-3 border-b border-gray-800/60 transition-opacity"
      class:opacity-40={!enabled} class:pointer-events-none={!enabled}>
   <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Band Mapping</span>
   <div class="mt-2 space-y-2">

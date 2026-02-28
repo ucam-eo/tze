@@ -14,7 +14,7 @@
     { id: 'segmenter',  label: 'Solar',   icon: Sun },
   ];
 
-  let { similarityRef = $bindable() }: { similarityRef?: SimilaritySearch } = $props();
+  let { similarityRef = $bindable(), onOpenOsm }: { similarityRef?: SimilaritySearch; onOpenOsm?: () => void } = $props();
 
   function switchTool(id: ToolId) {
     if (id === $activeTool) return;
@@ -44,11 +44,13 @@
   </div>
 
   <!-- Active tool panel -->
-  <div class="px-4 py-3">
-    {#if $activeTool === 'similarity'}
+  <div class="px-3 py-3">
+    <!-- SimilaritySearch always mounted (preserves UMAP state), hidden via CSS -->
+    <div class:hidden={$activeTool !== 'similarity'}>
       <SimilaritySearch bind:this={similarityRef} />
-    {:else if $activeTool === 'classifier'}
-      <LabelPanel />
+    </div>
+    {#if $activeTool === 'classifier'}
+      <LabelPanel onOpenOsm={onOpenOsm} />
     {:else if $activeTool === 'segmenter'}
       <SegmentPanel />
     {/if}

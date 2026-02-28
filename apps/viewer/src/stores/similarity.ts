@@ -1,0 +1,8 @@
+import { writable } from 'svelte/store';
+import type { TileSimilarity } from '../lib/similarity';
+
+export const simScores = writable<TileSimilarity[]>([]);
+export const simRefEmbedding = writable<Float32Array | null>(null);
+export const simSelectedPixel = writable<{ ci: number; cj: number; row: number; col: number } | null>(null);
+export const simThreshold = writable(0.5);
+export const simEmbeddingTileCount = writable(0);

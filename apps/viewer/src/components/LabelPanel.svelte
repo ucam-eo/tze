@@ -6,10 +6,13 @@
     labelCounts, addClass, removeClass, clearLabels,
   } from '../stores/classifier';
   import { classifyTiles, type ClassifyProgress } from '../lib/classify';
-  import OsmImport from './OsmImport.svelte';
+  interface Props {
+    onOpenOsm?: () => void;
+  }
+
+  let { onOpenOsm }: Props = $props();
 
   let newClassName = $state('');
-  let osmExpanded = $state(false);
   let newClassColor = $state('#3b82f6');
   let isClassifying = $state(false);
   let classifyProgress = $state<ClassifyProgress | null>(null);
@@ -39,28 +42,34 @@
     isClassifying = true;
     classifyProgress = null;
 
+    const allLabels = $labels;
+    const allClasses = $classes;
+
+    // Diagnostic: log what the classifier receives
+    const byClass = new Map<number, number>();
+    for (const l of allLabels) byClass.set(l.classId, (byClass.get(l.classId) ?? 0) + 1);
+    console.log('[classify] classes:', allClasses.map(c => `${c.name}(id=${c.id})`));
+    console.log('[classify] labels:', allLabels.length, 'across classes:', [...byClass.entries()].map(([id, n]) => `id=${id}:${n}`));
+
     try {
       source.clearClassificationOverlays();
       const opacity = $classificationOpacity;
       const results = await classifyTiles(
         source.embeddingCache,
-        $labels,
-        $classes,
+        allLabels,
+        allClasses,
         $kValue,
         $confidenceThreshold,
         (p) => { classifyProgress = p; },
-        (ci, cj, canvas) => {
+        (ci, cj, canvas, classMap, w, h) => {
           source.addClassificationOverlay(ci, cj, canvas);
           source.setClassificationOpacity(opacity);
+          source.setClassificationMap(ci, cj, classMap, w, h);
+          $isClassified = true;
         },
       );
 
-      // Store per-pixel class maps for hover lookup
-      for (const r of results) {
-        source.setClassificationMap(r.ci, r.cj, r.classMap, r.canvas.width, r.canvas.height);
-      }
-
-      $isClassified = true;
+      void results; // class maps already stored incrementally above
     } finally {
       isClassifying = false;
       classifyProgress = null;
@@ -137,44 +146,34 @@
     <div class="text-[10px] text-gray-600 italic">Select a class to start labeling</div>
   {/if}
 
-  <div>
-    <button
-      onclick={() => osmExpanded = !osmExpanded}
-      class="flex items-center gap-1 w-full text-left text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
-    >
-      <span class="text-[8px] transition-transform {osmExpanded ? 'rotate-90' : ''}"
-            style="display:inline-block">&#9654;</span>
-      Import from OSM
-    </button>
-    {#if osmExpanded}
-      <div class="mt-1.5 pl-1 border-l border-gray-800/60">
-        <OsmImport />
-      </div>
-    {/if}
-  </div>
+  <button
+    onclick={() => onOpenOsm?.()}
+    class="w-full text-[10px] font-bold py-1.5 rounded border transition-all
+           bg-gray-900 text-gray-400 border-gray-700/60 hover:border-term-cyan/50 hover:text-term-cyan"
+  >IMPORT FROM OSM</button>
 
-  <div class="flex items-center gap-2">
+  <div class="flex items-center gap-1.5">
     <span class="text-gray-600 text-[10px] w-6">k</span>
     <input type="range" min="1" max="15" bind:value={$kValue}
-           class="flex-1 h-1" />
+           class="flex-1 h-1 min-w-0" />
     <span class="text-gray-500 text-[10px] tabular-nums w-4 text-right">{$kValue}</span>
   </div>
 
-  <div class="flex items-center gap-2">
+  <div class="flex items-center gap-1.5">
     <span class="text-gray-600 text-[10px] shrink-0">Conf</span>
     <input type="range" min="0" max="100" value={Math.round($confidenceThreshold * 100)}
            oninput={(e) => $confidenceThreshold = parseInt((e.target as HTMLInputElement).value) / 100}
-           class="flex-1 h-1" />
-    <span class="text-gray-500 text-[10px] tabular-nums w-8 text-right">{$confidenceThreshold.toFixed(2)}</span>
+           class="flex-1 h-1 min-w-0" />
+    <span class="text-gray-500 text-[10px] tabular-nums w-7 text-right">{$confidenceThreshold.toFixed(2)}</span>
   </div>
 
   {#if $isClassified}
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-1.5">
       <span class="text-gray-600 text-[10px] shrink-0">Cls α</span>
       <input type="range" min="0" max="100" value={Math.round($classificationOpacity * 100)}
              oninput={(e) => updateClassificationOpacity(parseInt((e.target as HTMLInputElement).value) / 100)}
-             class="flex-1 h-1" />
-      <span class="text-gray-500 text-[10px] tabular-nums w-8 text-right">{$classificationOpacity.toFixed(2)}</span>
+             class="flex-1 h-1 min-w-0" />
+      <span class="text-gray-500 text-[10px] tabular-nums w-7 text-right">{$classificationOpacity.toFixed(2)}</span>
     </div>
 
   {/if}

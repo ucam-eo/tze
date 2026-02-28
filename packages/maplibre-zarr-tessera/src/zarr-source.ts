@@ -766,6 +766,36 @@ export class ZarrTesseraSource {
       bgPixels = tmpCtx.getImageData(0, 0, w, h);
     }
 
+    // If no preview tile, capture the basemap pixels from the map canvas.
+    // MapLibre needs preserveDrawingBuffer:true for this to work — check that
+    // the captured pixels are non-empty before using them.
+    if (!bgPixels && this.map) {
+      try {
+        const mapCanvas = this.map.getCanvas();
+        const tl = this.map.project(corners[0] as [number, number]);
+        const tr = this.map.project(corners[1] as [number, number]);
+        const br = this.map.project(corners[2] as [number, number]);
+        const bl = this.map.project(corners[3] as [number, number]);
+        const sx = Math.round(Math.min(tl.x, bl.x));
+        const sy = Math.round(Math.min(tl.y, tr.y));
+        const sw = Math.round(Math.max(tr.x, br.x)) - sx;
+        const sh = Math.round(Math.max(bl.y, br.y)) - sy;
+        if (sw > 0 && sh > 0) {
+          const tmp = document.createElement('canvas');
+          tmp.width = w;
+          tmp.height = h;
+          const tmpCtx = tmp.getContext('2d')!;
+          tmpCtx.drawImage(mapCanvas, sx, sy, sw, sh, 0, 0, w, h);
+          const captured = tmpCtx.getImageData(0, 0, w, h);
+          // Verify pixels aren't all blank (WebGL preserveDrawingBuffer=false yields zeros)
+          let nonZero = 0;
+          const d = captured.data;
+          for (let i = 0; i < d.length; i += 40) { if (d[i] || d[i + 1] || d[i + 2]) { nonZero++; } }
+          if (nonZero > 0) bgPixels = captured;
+        }
+      } catch { /* ignore CORS/security errors on map canvas read */ }
+    }
+
     // Simple hash for pseudo-random per-pixel noise
     const rng = (x: number) => {
       x = ((x >> 16) ^ x) * 0x45d9f3b;
@@ -829,17 +859,34 @@ export class ZarrTesseraSource {
             g = Math.round(g * (1 + shift * 0.15));
             b = Math.round(b * (1 + shift * 0.3));
 
+            // Pulsing digital quantisation wave — posterizes brightness in sweeping bands
+            const wave = Math.sin(tSec * 3 + y * 0.05 + x * 0.02) * 0.5 + 0.5;
+            const quantize = glitchIntensity * wave;
+            if (quantize > 0.2) {
+              const levels = 6;
+              r = Math.round(Math.round(r / 255 * levels) / levels * 255);
+              g = Math.round(Math.round(g / 255 * levels) / levels * 255);
+              b = Math.round(Math.round(b / 255 * levels) / levels * 255);
+            }
+
+            // Brightness pulse (rhythmic throb)
+            const pulse = 1.0 + 0.15 * glitchIntensity * Math.sin(tSec * 4 - y * 0.03);
+            r = Math.min(255, Math.round(r * pulse));
+            g = Math.min(255, Math.round(g * pulse));
+            b = Math.min(255, Math.round(b * pulse));
+
             // Static noise in glitch band
             if (inGlitchBand && Math.random() < 0.08 * glitchIntensity) {
               const n = rng(x * 7919 + y * 6271 + (t | 0)) & 0x3f;
               r = n; g = n + 40; b = n + 50;
             }
 
-            // Apply scanline
+            // Apply scanline — blend towards transparent as progress nears 1
+            const alpha = Math.round(200 + 55 * (1 - progress));
             dst[di]     = Math.min(255, r * scanline) | 0;
             dst[di + 1] = Math.min(255, g * scanline) | 0;
             dst[di + 2] = Math.min(255, b * scanline) | 0;
-            dst[di + 3] = 255;
+            dst[di + 3] = alpha;
           }
         }
 
@@ -852,11 +899,47 @@ export class ZarrTesseraSource {
         ctx.fillStyle = vg;
         ctx.fillRect(0, 0, w, h);
       } else {
-        // No background — dark fill
-        ctx.fillStyle = 'rgba(0, 8, 12, 0.9)';
+        // No preview — semi-transparent with scanning grid effect
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = `rgba(0, 8, 12, ${0.15 + 0.10 * (1 - progress)})`;
         ctx.fillRect(0, 0, w, h);
-        ctx.fillStyle = 'rgba(0, 229, 255, 0.015)';
-        for (let y = 0; y < h; y += 3) ctx.fillRect(0, y, w, 1);
+
+        const tSec = t / 1000;
+        const gridSpacing = 16;
+        const glitchIntensity = 1.0 - progress;
+
+        // Faint grid lines
+        ctx.strokeStyle = `rgba(0, 229, 255, ${0.04 + 0.03 * glitchIntensity})`;
+        ctx.lineWidth = 0.5;
+        for (let x = 0; x < w; x += gridSpacing) {
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+        }
+        for (let y = 0; y < h; y += gridSpacing) {
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        }
+
+        // Horizontal scan line sweeping downward
+        const scanY = (tSec * 80) % (h + 40) - 20;
+        const scanGrad = ctx.createLinearGradient(0, scanY - 20, 0, scanY + 20);
+        scanGrad.addColorStop(0, 'rgba(0, 229, 255, 0)');
+        scanGrad.addColorStop(0.5, `rgba(0, 229, 255, ${0.12 * glitchIntensity})`);
+        scanGrad.addColorStop(1, 'rgba(0, 229, 255, 0)');
+        ctx.fillStyle = scanGrad;
+        ctx.fillRect(0, scanY - 20, w, 40);
+
+        // Corner brackets
+        const bracketLen = Math.min(w, h) * 0.1;
+        const bracketInset = 6;
+        ctx.strokeStyle = `rgba(0, 229, 255, ${0.15 + 0.1 * Math.sin(tSec * 2)})`;
+        ctx.lineWidth = 1.5;
+        // top-left
+        ctx.beginPath(); ctx.moveTo(bracketInset, bracketInset + bracketLen); ctx.lineTo(bracketInset, bracketInset); ctx.lineTo(bracketInset + bracketLen, bracketInset); ctx.stroke();
+        // top-right
+        ctx.beginPath(); ctx.moveTo(w - bracketInset - bracketLen, bracketInset); ctx.lineTo(w - bracketInset, bracketInset); ctx.lineTo(w - bracketInset, bracketInset + bracketLen); ctx.stroke();
+        // bottom-left
+        ctx.beginPath(); ctx.moveTo(bracketInset, h - bracketInset - bracketLen); ctx.lineTo(bracketInset, h - bracketInset); ctx.lineTo(bracketInset + bracketLen, h - bracketInset); ctx.stroke();
+        // bottom-right
+        ctx.beginPath(); ctx.moveTo(w - bracketInset - bracketLen, h - bracketInset); ctx.lineTo(w - bracketInset, h - bracketInset); ctx.lineTo(w - bracketInset, h - bracketInset - bracketLen); ctx.stroke();
       }
 
       // --- HUD overlay: spinning rings + progress arc ---

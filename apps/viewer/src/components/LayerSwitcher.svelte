@@ -45,7 +45,7 @@
   }
 </script>
 
-<div class="px-4 py-3 border-b border-gray-800/60">
+<div class="px-3 py-3 border-b border-gray-800/60">
   <span class="text-gray-500 text-[10px] uppercase tracking-[0.15em]">Layers</span>
   <div class="mt-2 flex gap-1">
     {#each BASEMAPS as bm}

@@ -123,7 +123,7 @@ export class PointCloudRenderer {
   private disposed = false;
 
   constructor(private canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext('webgl2', { antialias: true, alpha: false })!;
+    const gl = canvas.getContext('webgl2', { antialias: true, alpha: true, premultipliedAlpha: false })!;
     this.gl = gl;
 
     this.program = createProgram(gl);
@@ -159,6 +159,16 @@ export class PointCloudRenderer {
     canvas.addEventListener('mousemove', this.onMouseMove);
     canvas.addEventListener('mouseup', this.onMouseUp);
     canvas.addEventListener('mouseleave', this.onMouseUp);
+  }
+
+  /** Switch between opaque background (sidebar) and transparent (overlay). */
+  setTransparent(transparent: boolean) {
+    const { gl } = this;
+    if (transparent) {
+      gl.clearColor(0, 0, 0, 0);
+    } else {
+      gl.clearColor(0.07, 0.07, 0.10, 1.0);
+    }
   }
 
   private onMouseDown = (e: MouseEvent) => {

@@ -1,25 +1,21 @@
 <script lang="ts">
+  import { get } from 'svelte/store';
   import { zarrSource } from '../stores/zarr';
+  import { simScores, simRefEmbedding, simSelectedPixel, simThreshold, simEmbeddingTileCount } from '../stores/similarity';
   import { computeSimilarityScores, renderSimilarityOverlays, type TileSimilarity } from '../lib/similarity';
-  import UmapCloud from './UmapCloud.svelte';
 
-  let threshold = $state(0.5);
   let isComputing = $state(false);
-  let selectedPixel = $state<{ lng: number; lat: number; ci: number; cj: number; row: number; col: number } | null>(null);
-  let refEmbedding = $state<Float32Array | null>(null);
-  let cachedScores = $state<TileSimilarity[]>([]);
-  let embeddingTileCount = $state(0);
   let pendingRecompute = false;
 
   // Track embedding loads via events since embeddingCache is a plain Map
   $effect(() => {
     const src = $zarrSource;
-    if (!src) { embeddingTileCount = 0; return; }
-    embeddingTileCount = src.embeddingCache.size;
+    if (!src) { $simEmbeddingTileCount = 0; return; }
+    $simEmbeddingTileCount = src.embeddingCache.size;
     const handler = () => {
-      embeddingTileCount = src.embeddingCache.size;
+      $simEmbeddingTileCount = src.embeddingCache.size;
       // Re-run similarity + UMAP when new tiles are loaded while a pixel is selected
-      if (refEmbedding && selectedPixel) runCompute();
+      if ($simRefEmbedding && $simSelectedPixel) runCompute();
     };
     src.on('embeddings-loaded', handler);
     return () => src.off('embeddings-loaded', handler);
@@ -32,8 +28,8 @@
     const emb = src.getEmbeddingAt(lng, lat);
     if (!emb) return;
 
-    selectedPixel = { lng, lat, ci: emb.ci, cj: emb.cj, row: emb.row, col: emb.col };
-    refEmbedding = emb.embedding;
+    $simSelectedPixel = { ci: emb.ci, cj: emb.cj, row: emb.row, col: emb.col };
+    $simRefEmbedding = emb.embedding;
     runCompute();
   }
 
@@ -41,15 +37,15 @@
    *  If called while already computing, queues a re-run. */
   async function runCompute() {
     const src = $zarrSource;
-    if (!src || !refEmbedding) return;
+    if (!src || !$simRefEmbedding) return;
     if (isComputing) { pendingRecompute = true; return; }
     isComputing = true;
 
     try {
       src.clearClassificationOverlays();
-      cachedScores = await computeSimilarityScores(
+      $simScores = await computeSimilarityScores(
         src.embeddingCache,
-        refEmbedding,
+        $simRefEmbedding,
       );
       applyThreshold();
     } finally {
@@ -65,9 +61,11 @@
    *  Updates existing overlay sources in-place (no clear+re-add). */
   function applyThreshold() {
     const src = $zarrSource;
-    if (!src || cachedScores.length === 0) return;
+    const scores = $simScores;
+    const threshold = $simThreshold;
+    if (!src || scores.length === 0) return;
 
-    renderSimilarityOverlays(cachedScores, threshold, (r) => {
+    renderSimilarityOverlays(scores, threshold, (r) => {
       src.addClassificationOverlay(r.ci, r.cj, r.canvas);
       src.setClassificationOpacity(0.8);
     });
@@ -75,23 +73,29 @@
 
   function handleClear() {
     $zarrSource?.clearClassificationOverlays();
-    selectedPixel = null;
-    refEmbedding = null;
-    cachedScores = [];
+    $simSelectedPixel = null;
+    $simRefEmbedding = null;
+    $simScores = [];
   }
 
+  // React to threshold changes from any source (sidebar slider or UMAP window slider)
+  $effect(() => {
+    const _t = $simThreshold; // track only threshold
+    // Use get() to avoid tracking simScores in this effect
+    if (get(simScores).length > 0) applyThreshold();
+  });
+
   function updateThreshold(val: number) {
-    threshold = val;
-    if (cachedScores.length > 0) applyThreshold();
+    $simThreshold = val;
   }
 </script>
 
 <div class="space-y-3">
-  {#if selectedPixel}
+  {#if $simSelectedPixel}
     <div class="text-[10px] text-gray-500">
-      Reference: <span class="text-gray-300">({selectedPixel.ci},{selectedPixel.cj}) px [{selectedPixel.row},{selectedPixel.col}]</span>
+      Reference: <span class="text-gray-300">({$simSelectedPixel.ci},{$simSelectedPixel.cj}) px [{$simSelectedPixel.row},{$simSelectedPixel.col}]</span>
     </div>
-  {:else if embeddingTileCount > 0}
+  {:else if $simEmbeddingTileCount > 0}
     <div class="text-[10px] text-gray-600 italic">Click a pixel to select reference</div>
   {:else}
     <div class="text-[9px] text-gray-700 leading-relaxed">
@@ -99,19 +103,15 @@
     </div>
   {/if}
 
-  <div class="flex items-center gap-2">
-    <span class="text-gray-600 text-[10px] shrink-0">Threshold</span>
-    <input type="range" min="0" max="100" value={Math.round(threshold * 100)}
+  <div class="flex items-center gap-1.5">
+    <span class="text-gray-600 text-[10px] shrink-0">Thresh</span>
+    <input type="range" min="0" max="100" value={Math.round($simThreshold * 100)}
            oninput={(e) => updateThreshold(parseInt((e.target as HTMLInputElement).value) / 100)}
-           class="flex-1 h-1" />
-    <span class="text-gray-500 text-[10px] tabular-nums w-8 text-right">{threshold.toFixed(2)}</span>
+           class="flex-1 h-1 min-w-0" />
+    <span class="text-gray-500 text-[10px] tabular-nums w-7 text-right">{$simThreshold.toFixed(2)}</span>
   </div>
 
-  {#if cachedScores.length > 0 && refEmbedding && selectedPixel}
-    <UmapCloud {cachedScores} {refEmbedding} {selectedPixel} {threshold} {embeddingTileCount} />
-  {/if}
-
-  {#if selectedPixel}
+  {#if $simSelectedPixel}
     <div class="flex gap-1.5">
       <button
         onclick={handleClear}

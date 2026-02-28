@@ -7,6 +7,8 @@ export interface ClassDef {
   id: number;
 }
 
+export type LabelSource = 'human' | 'osm';
+
 export interface LabelPoint {
   lngLat: [number, number];
   ci: number;
@@ -15,6 +17,7 @@ export interface LabelPoint {
   col: number;
   classId: number;
   embedding: Float32Array;
+  source: LabelSource;
 }
 
 // --- Stores ---
@@ -73,6 +76,7 @@ export function addLabel(
     col: embeddingAt.col,
     classId,
     embedding: embeddingAt.embedding,
+    source: 'human',
   }]);
 }
 
@@ -113,7 +117,10 @@ export function importOsmLabels(
   const toAddLabels: LabelPoint[] = [];
   for (const [className, points] of newLabels) {
     const cls = classMap.get(className);
-    if (!cls) continue;
+    if (!cls) {
+      console.warn(`[importOsmLabels] class "${className}" not found in classMap — skipping ${points.length} labels`);
+      continue;
+    }
     for (const { lngLat, embeddingAt } of points) {
       toAddLabels.push({
         lngLat,
@@ -123,6 +130,7 @@ export function importOsmLabels(
         col: embeddingAt.col,
         classId: cls.id,
         embedding: embeddingAt.embedding,
+        source: 'osm',
       });
       labelsImported++;
     }
@@ -131,6 +139,10 @@ export function importOsmLabels(
   if (toAddLabels.length > 0) {
     labels.update(ls => [...ls, ...toAddLabels]);
   }
+
+  console.log(`[importOsmLabels] created ${classesCreated} classes, imported ${labelsImported} labels`);
+  console.log(`[importOsmLabels] total classes now:`, get(classes).map(c => `${c.name}(id=${c.id})`));
+  console.log(`[importOsmLabels] total labels now:`, get(labels).length);
 
   return { classesCreated, labelsImported };
 }

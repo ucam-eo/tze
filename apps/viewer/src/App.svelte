@@ -4,6 +4,7 @@
   import { mapInstance } from './stores/map';
   import TopBar from './components/TopBar.svelte';
   import CatalogModal from './components/CatalogModal.svelte';
+  import OsmImport from './components/OsmImport.svelte';
   import LayerSwitcher from './components/LayerSwitcher.svelte';
   import ControlPanel from './components/ControlPanel.svelte';
   import DebugConsole from './components/DebugConsole.svelte';
@@ -11,16 +12,39 @@
   import type SimilaritySearch from './components/SimilaritySearch.svelte';
   import { zarrSource } from './stores/zarr';
   import { get } from 'svelte/store';
-  import { activeClass, classes, addLabel, isClassified } from './stores/classifier';
+  import { activeClass, classes, labels, addLabel, isClassified } from './stores/classifier';
   import { activeTool } from './stores/tools';
   import { zones, activeZoneId, switchZone } from './stores/stac';
   import { pointInBbox } from './lib/stac';
   import { segmentPolygons, segmentVisible } from './stores/segmentation';
+  import UmapCloud from './components/UmapCloud.svelte';
+  import { simEmbeddingTileCount } from './stores/similarity';
 
   let mapContainer: HTMLDivElement;
   let labelMarkers: maplibregl.Marker[] = [];
   let similarityRef: SimilaritySearch | undefined = $state();
+
+  function createMarkerElement(color: string, source: 'human' | 'osm'): HTMLElement {
+    const el = document.createElement('div');
+    if (source === 'osm') {
+      // Small dot with "osm" text for OSM-sourced labels
+      el.style.cssText = `
+        width: 10px; height: 10px; border-radius: 50%;
+        background: ${color}; border: 1.5px solid rgba(255,255,255,0.6);
+        box-shadow: 0 0 4px ${color}80;
+      `;
+    } else {
+      // Larger dot for human labels
+      el.style.cssText = `
+        width: 16px; height: 16px; border-radius: 50%;
+        background: ${color}; border: 2px solid rgba(255,255,255,0.8);
+        box-shadow: 0 0 6px ${color}aa;
+      `;
+    }
+    return el;
+  }
   let catalogModalOpen = $state(true);
+  let osmModalOpen = $state(false);
 
   onMount(() => {
     const map = new maplibregl.Map({
@@ -39,6 +63,7 @@
       },
       center: [0, 20],
       zoom: 3,
+      preserveDrawingBuffer: true,
     });
 
     map.on('load', () => {
@@ -112,30 +137,62 @@
         }
       }
 
-      // Floating classification tooltip
+      // Floating tooltip: classification pixels + label markers
       const tip = document.getElementById('class-tooltip');
       if (!tip) return;
-      if (get(isClassified)) {
-        const classifySrc = src ?? get(zarrSource);
-        const classId = classifySrc?.getClassificationAt(e.lngLat.lng, e.lngLat.lat) ?? null;
+      const tipX = e.originalEvent.clientX + 12;
+      const tipY = e.originalEvent.clientY - 10;
 
-        if (classId != null && classId >= 0) {
-          const cls = get(classes).find(c => c.id === classId);
-          if (cls) {
-            tip.innerHTML = `<span style="background:${cls.color}" class="inline-block w-2 h-2 rounded-sm"></span> ${cls.name}`;
-            tip.style.left = `${e.originalEvent.clientX + 12}px`;
-            tip.style.top = `${e.originalEvent.clientY - 10}px`;
-            tip.style.display = 'flex';
-            return;
+      // Check classification pixel under cursor
+      const classifySrc = src ?? get(zarrSource);
+      const classId = classifySrc?.getClassificationAt(e.lngLat.lng, e.lngLat.lat) ?? null;
+
+      if (classId != null && classId >= 0) {
+        const cls = get(classes).find(c => c.id === classId);
+        if (cls) {
+          tip.innerHTML = `<span style="background:${cls.color}" class="inline-block w-2 h-2 rounded-sm"></span> ${cls.name}`;
+          tip.style.left = `${tipX}px`;
+          tip.style.top = `${tipY}px`;
+          tip.style.display = 'flex';
+          return;
+        }
+      } else if (classId === -1) {
+        tip.innerHTML = '<span class="inline-block w-2 h-2 rounded-sm bg-gray-500"></span> <i class="text-gray-500">uncertain</i>';
+        tip.style.left = `${tipX}px`;
+        tip.style.top = `${tipY}px`;
+        tip.style.display = 'flex';
+        return;
+      }
+
+      // Check label proximity (screen-space, 12px threshold)
+      const allLabels = get(labels);
+      if (allLabels.length > 0) {
+        const allClasses = get(classes);
+        const classLookup = new Map(allClasses.map(c => [c.id, c]));
+        const mousePoint = map.project(e.lngLat);
+        let nearest: { dist: number; label: typeof allLabels[0] } | null = null;
+        for (const lp of allLabels) {
+          const pt = map.project(lp.lngLat);
+          const dx = pt.x - mousePoint.x;
+          const dy = pt.y - mousePoint.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 12 && (!nearest || dist < nearest.dist)) {
+            nearest = { dist, label: lp };
           }
-        } else if (classId === -1) {
-          tip.innerHTML = '<span class="inline-block w-2 h-2 rounded-sm bg-gray-500"></span> <i class="text-gray-500">uncertain</i>';
-          tip.style.left = `${e.originalEvent.clientX + 12}px`;
-          tip.style.top = `${e.originalEvent.clientY - 10}px`;
+        }
+        if (nearest) {
+          const cls = classLookup.get(nearest.label.classId);
+          const srcTag = nearest.label.source === 'osm'
+            ? ' <span class="text-gray-500">osm</span>'
+            : ' <span class="text-gray-500">manual</span>';
+          tip.innerHTML = `<span style="background:${cls?.color ?? '#888'}" class="inline-block w-2 h-2 rounded-sm"></span> ${cls?.name ?? '?'}${srcTag}`;
+          tip.style.left = `${tipX}px`;
+          tip.style.top = `${tipY}px`;
           tip.style.display = 'flex';
           return;
         }
       }
+
       tip.style.display = 'none';
     });
 
@@ -169,15 +226,6 @@
         for (const emb of embeddings) {
           addLabel([e.lngLat.lng, e.lngLat.lat], emb, cls.id);
         }
-
-        // Add visual marker at click location
-        const marker = new maplibregl.Marker({
-          color: cls.color,
-          scale: 0.5,
-        })
-          .setLngLat(e.lngLat)
-          .addTo(map);
-        labelMarkers.push(marker);
       }
     });
 
@@ -261,6 +309,36 @@
     ]);
   });
 
+  // Sync label markers reactively — only visible on classifier tab
+  $effect(() => {
+    const map = $mapInstance;
+    const allLabels = $labels;
+    const allClasses = $classes;
+    const tool = $activeTool;
+    if (!map) return;
+
+    // Remove old markers
+    for (const m of labelMarkers) m.remove();
+    labelMarkers = [];
+
+    // Only show markers when on the classifier tab
+    if (tool !== 'classifier') return;
+
+    // Build classId → color lookup
+    const colorMap = new Map<number, string>();
+    for (const cls of allClasses) colorMap.set(cls.id, cls.color);
+
+    // Create markers for all labels
+    for (const lp of allLabels) {
+      const color = colorMap.get(lp.classId) ?? '#888';
+      const el = createMarkerElement(color, lp.source);
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat(lp.lngLat)
+        .addTo(map);
+      labelMarkers.push(marker);
+    }
+  });
+
   // Update segmentation polygon layers when store changes
   $effect(() => {
     const map = $mapInstance;
@@ -283,14 +361,20 @@
 <!-- Catalog modal -->
 <CatalogModal bind:open={catalogModalOpen} />
 
+<!-- OSM import modal -->
+<OsmImport bind:open={osmModalOpen} />
+
 <!-- Sidebar -->
 <div class="absolute top-12 right-4 w-[240px] max-h-[calc(100vh-4rem)] bg-black/85 backdrop-blur-xl
             border border-gray-800/80 rounded-lg shadow-2xl shadow-cyan-900/20
             overflow-y-auto select-none z-10 font-mono text-gray-300 text-xs">
   <LayerSwitcher />
   <ControlPanel />
-  <ToolSwitcher bind:similarityRef={similarityRef} />
+  <ToolSwitcher bind:similarityRef={similarityRef} onOpenOsm={() => { osmModalOpen = true; }} />
 </div>
+
+<!-- UMAP floating window (outside sidebar to avoid backdrop-filter clipping) -->
+<UmapCloud visible={$activeTool === 'similarity' && $simEmbeddingTileCount > 0} />
 
 <!-- Debug console -->
 <DebugConsole />
