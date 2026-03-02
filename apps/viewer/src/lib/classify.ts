@@ -96,7 +96,7 @@ export async function classifyTiles(
   onProgress?.({ tilesDone: 0, tilesTotal, pixelsDone: 0, pixelsTotal: totalValidPixels });
 
   // Process tiles in GPU chunks to bound memory and allow UI updates
-  const GPU_CHUNK = 8192;
+  const GPU_CHUNK = 4096;
 
   for (const [, tile] of embeddingCache) {
     const { ci, cj, emb, scales, width, height, nBands } = tile;
@@ -111,30 +111,33 @@ export async function classifyTiles(
     canvas.height = height;
     const ctx = canvas.getContext('2d')!;
 
-    // Collect valid pixel indices and build query vectors
+    // First pass: collect valid pixel indices only (no data copy)
     const validIndices: number[] = [];
-    const queryFlat = new Float32Array(width * height * nBands); // over-allocated
-    let nValid = 0;
-
     for (let i = 0; i < width * height; i++) {
       const scale = scales[i];
       if (!scale || isNaN(scale) || scale === 0) continue;
       total++;
-      const srcOff = i * nBands;
-      const dstOff = nValid * nBands;
-      for (let b = 0; b < nBands; b++) queryFlat[dstOff + b] = emb[srcOff + b];
       validIndices.push(i);
-      nValid++;
     }
+    const nValid = validIndices.length;
+
+    // Reusable per-chunk buffer — filled directly from emb using indices
+    const chunkBuf = new Float32Array(GPU_CHUNK * nBands);
 
     // Process valid pixels in GPU-sized chunks
     for (let chunkStart = 0; chunkStart < nValid; chunkStart += GPU_CHUNK) {
       const chunkEnd = Math.min(chunkStart + GPU_CHUNK, nValid);
       const chunkSize = chunkEnd - chunkStart;
 
+      // Fill chunk buffer directly from emb
+      for (let i = 0; i < chunkSize; i++) {
+        const srcOff = validIndices[chunkStart + i] * nBands;
+        const dstOff = i * nBands;
+        for (let b = 0; b < nBands; b++) chunkBuf[dstOff + b] = emb[srcOff + b];
+      }
+
       // Build query tensor for this chunk [chunkSize, D]
-      const querySlice = queryFlat.subarray(chunkStart * nBands, chunkEnd * nBands);
-      const queries = tf.tensor2d(querySlice, [chunkSize, nBands]);
+      const queries = tf.tensor2d(chunkBuf.subarray(0, chunkSize * nBands), [chunkSize, nBands]);
 
       // Normalise queries for cosine similarity
       const qNormed = l2Normalise(queries);

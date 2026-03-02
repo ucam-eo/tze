@@ -16,8 +16,10 @@ export interface SampleProgress {
   samplesCollected: number;
 }
 
-const MAX_SAMPLES_PER_POLYGON = 20;
-const MAX_SAMPLES_PER_CATEGORY = 200;
+const IS_MOBILE = typeof navigator !== 'undefined' &&
+  (/iPhone|iPad|Android/i.test(navigator.userAgent) || window.innerWidth < 640);
+const MAX_SAMPLES_PER_POLYGON = IS_MOBILE ? 8 : 20;
+const MAX_SAMPLES_PER_CATEGORY = IS_MOBILE ? 60 : 200;
 
 /** Ray-casting point-in-polygon test. ring is [lng, lat][] (closed or open). */
 function pointInPolygon(lng: number, lat: number, ring: [number, number][]): boolean {
@@ -102,6 +104,9 @@ export async function sampleOsmCategories(
     if (samples.length > 0) {
       result.set(cat.tag, samples);
     }
+
+    // Release polygon geometry to free Overpass response memory
+    cat.polygons = [];
 
     onProgress?.({
       categoryIndex: ci + 1,

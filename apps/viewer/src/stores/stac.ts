@@ -4,7 +4,7 @@ import type { ZoneDescriptor } from '../lib/stac';
 import { mapInstance } from './map';
 import { zarrSource, metadata, bands, opacity, preview, loading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
 
-export const catalogUrl = writable('https://dl2.geotessera.org/zarr/v0/catalog.json');
+export const catalogUrl = writable('/zarr/v0/catalog.json');
 export const zones = writable<ZoneDescriptor[]>([]);
 export const activeZoneId = writable<string | null>(null);
 export const catalogStatus = writable<'idle' | 'loading' | 'loaded' | 'error'>('idle');
@@ -32,6 +32,7 @@ export async function switchZone(zoneId: string): Promise<void> {
   status.set(`Loading zone ${zone.utmZone}...`);
 
   try {
+    const mobile = window.innerWidth < 640 || /iPhone|iPad|Android/i.test(navigator.userAgent);
     const source = new ZarrTesseraSource({
       url: zone.zarrUrl,
       bands: get(bands),
@@ -39,6 +40,7 @@ export async function switchZone(zoneId: string): Promise<void> {
       preview: get(preview),
       globalPreviewUrl: get(globalPreviewUrl),
       globalPreviewBounds: get(globalPreviewBounds) ?? undefined,
+      maxCached: mobile ? 4 : undefined,
     });
 
     source.on('metadata-loaded', (meta) => {

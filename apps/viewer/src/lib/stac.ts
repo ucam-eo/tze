@@ -32,14 +32,19 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
   let globalPreviewUrl: string | null = null;
   let globalBounds: [number, number, number, number] | null = null;
 
+  // Resolve relative catalog URLs against the page origin so that
+  // new URL(href, base) works for relative STAC link resolution,
+  // and fetch() routes through the Vite/proxy server.
+  const resolvedCatalogUrl = new URL(catalogUrl, window.location.href).href;
+
   // 1. Fetch and parse the root catalog
-  const catalogData = await fetchJson(catalogUrl, signal);
+  const catalogData = await fetchJson(resolvedCatalogUrl, signal);
   const catalog = create(catalogData as Record<string, unknown>);
 
   // 2. Follow child links (rel=child → collections)
   const childLinks = catalog.getChildLinks();
   for (const link of childLinks) {
-    const collectionUrl = new URL(link.href, catalogUrl).href;
+    const collectionUrl = new URL(link.href, resolvedCatalogUrl).href;
     const collectionData = await fetchJson(collectionUrl, signal);
     const collection = create(collectionData as Record<string, unknown>);
 
@@ -74,7 +79,7 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
   zones.sort((a, b) => a.utmZone - b.utmZone);
 
   // Probe for global preview store next to the catalog
-  const baseUrl = catalogUrl.replace(/\/[^/]*$/, '/');
+  const baseUrl = resolvedCatalogUrl.replace(/\/[^/]*$/, '/');
   // Find the latest year from discovered zones
   const years = [...new Set(zones.map(z => z.id.match(/_(\d{4})$/)?.[1]).filter(Boolean))].sort();
   const latestYear = years[years.length - 1] ?? '2025';

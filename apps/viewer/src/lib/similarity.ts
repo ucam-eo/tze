@@ -1,5 +1,3 @@
-import * as tf from '@tensorflow/tfjs-core';
-import '@tensorflow/tfjs-backend-webgl';
 import type { TileEmbeddings } from '@ucam-eo/maplibre-zarr-tessera';
 
 /** Per-tile cached similarity data with normalised scores. */
@@ -23,93 +21,82 @@ export interface SimilarityOverlay {
 
 /**
  * Compute cosine similarity of every pixel in loaded tiles to a reference
- * embedding using GPU-batched matMul. Scores are normalised to 0..1 based
- * on the observed min/max across all tiles so the threshold slider gives
- * meaningful control even when raw cosine similarities are tightly clustered.
+ * embedding using CPU dot products. For dim=128 this is fast enough (~256
+ * FLOPs per pixel) and avoids GPU memory pressure that causes OOM on mobile.
+ *
+ * Scores are normalised to 0..1 based on the observed min/max across all
+ * tiles so the threshold slider gives meaningful control even when raw
+ * cosine similarities are tightly clustered.
  */
 export async function computeSimilarityScores(
   embeddingCache: Map<string, TileEmbeddings>,
   refEmbedding: Float32Array,
   onTileDone?: (t: TileSimilarity) => void,
 ): Promise<TileSimilarity[]> {
-  await tf.ready();
+  const D = refEmbedding.length;
 
-  // Normalised reference vector [1, D]
-  const refRaw = tf.tensor2d(refEmbedding, [1, refEmbedding.length]);
-  const refNorm = tf.sqrt(tf.add(tf.sum(tf.square(refRaw), 1, true), 1e-12));
-  const refNormed = tf.div(refRaw, refNorm);
-  const refT = tf.transpose(refNormed);
-  refRaw.dispose(); refNorm.dispose();
+  // Pre-normalise reference vector (CPU)
+  let refNormSq = 0;
+  for (let b = 0; b < D; b++) refNormSq += refEmbedding[b] * refEmbedding[b];
+  const refScale = 1 / Math.sqrt(refNormSq + 1e-12);
+  const ref = new Float32Array(D);
+  for (let b = 0; b < D; b++) ref[b] = refEmbedding[b] * refScale;
 
   // First pass: compute raw cosine similarities per tile
   interface RawTile {
     ci: number; cj: number; width: number; height: number;
-    rawScores: Float32Array;
+    scores: Float32Array;
   }
   const rawTiles: RawTile[] = [];
-  const GPU_CHUNK = 8192;
 
   let globalMin = Infinity;
   let globalMax = -Infinity;
 
   for (const [, tile] of embeddingCache) {
     const { ci, cj, emb, scales, width, height, nBands } = tile;
-    const rawScores = new Float32Array(width * height);
-    rawScores.fill(NaN);
+    const scores = new Float32Array(width * height);
+    scores.fill(NaN);
 
-    const validIndices: number[] = [];
-    const queryFlat = new Float32Array(width * height * nBands);
-    let nValid = 0;
-
-    for (let i = 0; i < width * height; i++) {
+    const npx = width * height;
+    for (let i = 0; i < npx; i++) {
       const s = scales[i];
       if (!s || isNaN(s) || s === 0) continue;
-      const srcOff = i * nBands;
-      const dstOff = nValid * nBands;
-      for (let b = 0; b < nBands; b++) queryFlat[dstOff + b] = emb[srcOff + b];
-      validIndices.push(i);
-      nValid++;
-    }
 
-    for (let chunkStart = 0; chunkStart < nValid; chunkStart += GPU_CHUNK) {
-      const chunkEnd = Math.min(chunkStart + GPU_CHUNK, nValid);
-      const chunkSize = chunkEnd - chunkStart;
-
-      const querySlice = queryFlat.subarray(chunkStart * nBands, chunkEnd * nBands);
-      const queries = tf.tensor2d(querySlice, [chunkSize, nBands]);
-
-      const qNorm = tf.sqrt(tf.add(tf.sum(tf.square(queries), 1, true), 1e-12));
-      const qNormed = tf.div(queries, qNorm);
-
-      const sim = tf.matMul(qNormed, refT);
-      const simData = await sim.data();
-
-      for (let i = 0; i < chunkSize; i++) {
-        const v = simData[i];
-        rawScores[validIndices[chunkStart + i]] = v;
-        if (v < globalMin) globalMin = v;
-        if (v > globalMax) globalMax = v;
+      // Dot product and query norm in one pass over D dimensions
+      const off = i * nBands;
+      let dot = 0, qSq = 0;
+      for (let b = 0; b < D; b++) {
+        const v = emb[off + b];
+        dot += v * ref[b];
+        qSq += v * v;
       }
+      const cos = dot / Math.sqrt(qSq + 1e-12);
 
-      queries.dispose(); qNorm.dispose(); qNormed.dispose(); sim.dispose();
+      scores[i] = cos;
+      if (cos < globalMin) globalMin = cos;
+      if (cos > globalMax) globalMax = cos;
     }
 
-    rawTiles.push({ ci, cj, width, height, rawScores });
+    rawTiles.push({ ci, cj, width, height, scores });
+    // Yield to event loop between tiles
     await new Promise(r => setTimeout(r, 0));
   }
 
-  refNormed.dispose(); refT.dispose();
-
-  // Second pass: normalise scores to 0..1 based on observed range
+  // Second pass: normalise scores to 0..1 in-place, wrap as TileSimilarity
   const range = globalMax - globalMin;
   const results: TileSimilarity[] = [];
 
   for (const raw of rawTiles) {
-    const scores = new Float32Array(raw.rawScores.length);
-    for (let i = 0; i < scores.length; i++) {
-      const v = raw.rawScores[i];
-      if (isNaN(v)) { scores[i] = NaN; continue; }
-      scores[i] = range > 0 ? (v - globalMin) / range : 0.5;
+    const { scores } = raw;
+    if (range > 0) {
+      for (let i = 0; i < scores.length; i++) {
+        const v = scores[i];
+        if (!isNaN(v)) scores[i] = (v - globalMin) / range;
+      }
+    } else {
+      for (let i = 0; i < scores.length; i++) {
+        if (!isNaN(scores[i])) scores[i] = 0.5;
+      }
     }
 
     const canvas = document.createElement('canvas');

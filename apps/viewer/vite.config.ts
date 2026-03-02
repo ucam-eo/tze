@@ -55,10 +55,7 @@ export default defineConfig({
   plugins: [svelte(), tailwindcss(), ortWasmPlugin()],
   server: {
     proxy: {
-      '/zarr': {
-        target: 'https://dl2.geotessera.org',
-        changeOrigin: true,
-      },
+      '/zarr': 'http://localhost:9999',
     },
   },
   resolve: {
