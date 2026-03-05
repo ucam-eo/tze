@@ -443,6 +443,46 @@ export class ZarrTesseraSource {
     return this.chunkCorners(ci, cj);
   }
 
+  /** Return all chunk indices whose bounding boxes intersect a GeoJSON polygon. */
+  getChunksInRegion(polygon: GeoJSON.Polygon): { ci: number; cj: number }[] {
+    if (!this.store || !this.proj) return [];
+    // Compute bounding box of the polygon in UTM
+    const coords = polygon.coordinates[0]; // outer ring
+    let minE = Infinity, maxE = -Infinity, minN = Infinity, maxN = -Infinity;
+    for (const [lng, lat] of coords) {
+      const [e, n] = this.proj.forward(lng, lat);
+      if (e < minE) minE = e;
+      if (e > maxE) maxE = e;
+      if (n < minN) minN = n;
+      if (n > maxN) maxN = n;
+    }
+    // Convert UTM bounds to chunk index ranges (same math as visibleChunkIndices)
+    const cs = this.store.meta.chunkShape;
+    const s = this.store.meta.shape;
+    const t = this.store.meta.transform;
+    const px = t[0];
+    const originE = t[2];
+    const originN = t[5];
+    const nChunksRow = Math.ceil(s[0] / cs[0]);
+    const nChunksCol = Math.ceil(s[1] / cs[1]);
+
+    const cjMin = Math.max(0, Math.floor((minE - originE) / (cs[1] * px)));
+    const cjMax = Math.min(nChunksCol - 1, Math.floor((maxE - originE) / (cs[1] * px)));
+    const ciMin = Math.max(0, Math.floor((originN - maxN) / (cs[0] * px)));
+    const ciMax = Math.min(nChunksRow - 1, Math.floor((originN - minN) / (cs[0] * px)));
+
+    const result: { ci: number; cj: number }[] = [];
+    for (let ci = ciMin; ci <= ciMax; ci++) {
+      for (let cj = cjMin; cj <= cjMax; cj++) {
+        if (this.store.chunkManifest && !this.store.chunkManifest.has(`${ci}_${cj}`)) continue;
+        if (!this.embeddingCache.has(this.chunkKey(ci, cj))) {
+          result.push({ ci, cj });
+        }
+      }
+    }
+    return result;
+  }
+
   /** Extract the 128-d embedding vector at a map coordinate.
    *  Returns null if the chunk's embeddings haven't been loaded. */
   getEmbeddingAt(lng: number, lat: number): EmbeddingAt | null {
