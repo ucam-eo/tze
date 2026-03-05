@@ -483,6 +483,32 @@ export class ZarrTesseraSource {
     return result;
   }
 
+  /** Load a batch of embedding chunks, calling onProgress after each.
+   *  Returns the number of chunks successfully loaded. */
+  async loadChunkBatch(
+    chunks: { ci: number; cj: number }[],
+    onProgress?: (loaded: number, total: number) => void,
+  ): Promise<number> {
+    let loaded = 0;
+    const total = chunks.length;
+    for (const { ci, cj } of chunks) {
+      const key = this.chunkKey(ci, cj);
+      if (this.embeddingCache.has(key)) {
+        loaded++;
+        onProgress?.(loaded, total);
+        continue;
+      }
+      try {
+        await this.loadFullChunk(ci, cj);
+        loaded++;
+      } catch (err) {
+        this.debug('error', `Failed to load chunk (${ci},${cj}): ${(err as Error).message}`);
+      }
+      onProgress?.(loaded, total);
+    }
+    return loaded;
+  }
+
   /** Extract the 128-d embedding vector at a map coordinate.
    *  Returns null if the chunk's embeddings haven't been loaded. */
   getEmbeddingAt(lng: number, lat: number): EmbeddingAt | null {
