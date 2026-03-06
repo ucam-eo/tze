@@ -1395,6 +1395,9 @@ export class ZarrTesseraSource {
     if (this.map!.getLayer('roi-regions-line')) this.map!.moveLayer('roi-regions-line');
     if (this.map!.getLayer('chunk-grid-lines')) this.map!.moveLayer('chunk-grid-lines');
     if (this.map!.getLayer('utm-zone-line')) this.map!.moveLayer('utm-zone-line');
+    // Similarity reference marker should be topmost
+    if (this.map!.getLayer('sim-ref-marker-ring')) this.map!.moveLayer('sim-ref-marker-ring');
+    if (this.map!.getLayer('sim-ref-marker-dot')) this.map!.moveLayer('sim-ref-marker-dot');
   }
 
   private removeChunkFromMap(key: string): void {
