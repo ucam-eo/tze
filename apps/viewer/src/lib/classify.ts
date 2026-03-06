@@ -161,16 +161,14 @@ export async function classifyTiles(
           rgba[rgbaIdx] = color[0];
           rgba[rgbaIdx + 1] = color[1];
           rgba[rgbaIdx + 2] = color[2];
-          // Fully opaque — raster-opacity controls overall transparency.
-          // Avoids double-premultiply darkening with CanvasSource.
-          rgba[rgbaIdx + 3] = 255;
+          rgba[rgbaIdx + 3] = 200;
           classMap[pixelIdx] = bestLabel;
           classified++;
         } else {
           rgba[rgbaIdx] = 128;
           rgba[rgbaIdx + 1] = 128;
           rgba[rgbaIdx + 2] = 128;
-          rgba[rgbaIdx + 3] = 255;
+          rgba[rgbaIdx + 3] = 80;
           classMap[pixelIdx] = -1;
           uncertain++;
         }

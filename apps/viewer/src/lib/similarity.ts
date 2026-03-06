@@ -127,9 +127,7 @@ export function renderSimilarityOverlays(
         rgba[rgbaIdx]     = 0;
         rgba[rgbaIdx + 1] = 229;
         rgba[rgbaIdx + 2] = 255;
-        // Fully opaque to avoid double-premultiply with CanvasSource;
-        // raster-opacity on the layer controls overall transparency.
-        rgba[rgbaIdx + 3] = 255;
+        rgba[rgbaIdx + 3] = 180;
       }
     }
 

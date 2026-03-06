@@ -691,12 +691,10 @@ export class ZarrTesseraSource {
   }
 
   /** Add or update classification overlays for multiple tiles at once.
-   *  Uses CanvasSource for zero-cost updates (no PNG encoding).
    *  Only raises overlay layers once at the end (O(N) instead of O(N²)). */
   addClassificationOverlayBatch(tiles: { ci: number; cj: number; canvas: HTMLCanvasElement }[]): void {
     if (!this.map || tiles.length === 0) return;
     let needsRaise = false;
-    const toFlush: string[] = [];
 
     for (const { ci, cj, canvas } of tiles) {
       const key = this.chunkKey(ci, cj);
@@ -704,32 +702,20 @@ export class ZarrTesseraSource {
       const layerId = `zarr-class-lyr-${key}`;
       const corners = this.chunkCorners(ci, cj);
 
-      const existingSource = this.map.getSource(sourceId) as
-        { play?: () => void; pause?: () => void } | undefined;
+      // Always remove + re-add to guarantee the canvas content is picked up
+      if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
+      if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
 
-      if (existingSource?.play) {
-        // Canvas already painted by caller — trigger texture re-read
-        toFlush.push(sourceId);
-      } else {
-        if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
-        if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
-
-        this.map.addSource(sourceId, {
-          type: 'canvas', canvas, coordinates: corners, animate: false,
-        });
-        this.map.addLayer({
-          id: layerId, type: 'raster', source: sourceId,
-          paint: { 'raster-opacity': 0.7, 'raster-fade-duration': 0 },
-        });
-        needsRaise = true;
-      }
-    }
-
-    // Flush updated canvases: play() marks dirty, pause() triggers texture upload
-    for (const id of toFlush) {
-      const src = this.map.getSource(id) as { play?: () => void; pause?: () => void } | undefined;
-      src?.play?.();
-      src?.pause?.();
+      this.map.addSource(sourceId, {
+        type: 'image',
+        url: canvas.toDataURL('image/png'),
+        coordinates: corners,
+      });
+      this.map.addLayer({
+        id: layerId, type: 'raster', source: sourceId,
+        paint: { 'raster-opacity': 0.7, 'raster-fade-duration': 0 },
+      });
+      needsRaise = true;
     }
 
     if (needsRaise) this.raiseOverlayLayers();
