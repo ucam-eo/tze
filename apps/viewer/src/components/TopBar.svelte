@@ -54,11 +54,66 @@
   let locating = $state(false);
   let searchExpanded = $state(false);
 
+  /** Try to parse coordinates from input. Supports:
+   *  51.5, -0.12  |  51.5 -0.12  |  51.5,-0.12
+   *  N51.5 W0.12  |  51.5N 0.12W
+   *  Returns [lat, lon] or null. */
+  function tryParseCoords(q: string): [number, number] | null {
+    const s = q.trim();
+    // Try "lat, lon" or "lat lon" (with optional comma)
+    const simple = s.match(/^([+-]?\d+\.?\d*)\s*[,\s]\s*([+-]?\d+\.?\d*)$/);
+    if (simple) {
+      const lat = parseFloat(simple[1]), lon = parseFloat(simple[2]);
+      if (lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) return [lat, lon];
+    }
+    // Try NSEW prefix/suffix: "N51.5 W0.12" or "51.5N 0.12W"
+    const nsew = s.match(/^([NSEW])\s*(\d+\.?\d*)\s*[,\s]\s*([NSEW])\s*(\d+\.?\d*)$/i)
+              || s.match(/^(\d+\.?\d*)\s*([NSEW])\s*[,\s]\s*(\d+\.?\d*)\s*([NSEW])$/i);
+    if (nsew) {
+      let lat: number, lon: number;
+      if (/[NSns]/i.test(nsew[1])) {
+        // prefix format: N51.5 W0.12
+        lat = parseFloat(nsew[2]) * (/[Ss]/.test(nsew[1]) ? -1 : 1);
+        lon = parseFloat(nsew[4]) * (/[Ww]/.test(nsew[3]) ? -1 : 1);
+      } else {
+        // suffix format: 51.5N 0.12W
+        lat = parseFloat(nsew[1]) * (/[Ss]/.test(nsew[2]) ? -1 : 1);
+        lon = parseFloat(nsew[3]) * (/[Ww]/.test(nsew[4]) ? -1 : 1);
+      }
+      if (lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) return [lat, lon];
+    }
+    return null;
+  }
+
+  function flyToCoords(lat: number, lon: number) {
+    const map = get(mapInstance);
+    if (!map) return;
+    map.flyTo({ center: [lon, lat], zoom: 14, duration: 1500 });
+    searchQuery = '';
+    searchResults = [];
+    searchOpen = false;
+  }
+
   function debounceSearch(q: string) {
     clearTimeout(debounceTimer);
     if (q.trim().length < 2) {
       searchResults = [];
       searchOpen = false;
+      return;
+    }
+    // Check for coordinate input — show as instant result
+    const coords = tryParseCoords(q.trim());
+    if (coords) {
+      searchResults = [{
+        place_id: -1,
+        display_name: `${coords[0].toFixed(5)}, ${coords[1].toFixed(5)}`,
+        lat: String(coords[0]),
+        lon: String(coords[1]),
+        boundingbox: [String(coords[0] - 0.01), String(coords[0] + 0.01), String(coords[1] - 0.01), String(coords[1] + 0.01)],
+        type: 'coordinate',
+        class: 'coordinate',
+      }];
+      searchOpen = true;
       return;
     }
     debounceTimer = setTimeout(() => fetchResults(q.trim()), 300);
@@ -102,8 +157,13 @@
       searchResults = [];
       searchOpen = false;
       searchInputEl?.blur();
-    } else if (e.key === 'Enter' && searchResults.length > 0) {
-      selectResult(searchResults[0]);
+    } else if (e.key === 'Enter') {
+      const coords = tryParseCoords(searchQuery.trim());
+      if (coords) {
+        flyToCoords(coords[0], coords[1]);
+      } else if (searchResults.length > 0) {
+        selectResult(searchResults[0]);
+      }
     }
   }
 
@@ -176,7 +236,7 @@
         onfocus={() => { if (searchResults.length > 0) searchOpen = true; }}
         onblur={() => { if (!searchQuery) searchExpanded = false; }}
         type="text"
-        placeholder="Search location..."
+        placeholder="Search or lat, lon..."
         class="w-[160px] sm:w-[220px] h-6 pl-6 pr-2 rounded bg-gray-900/80 border border-term-cyan/30
                text-[11px] text-gray-300 placeholder-gray-600
                focus:border-term-cyan/50 focus:outline-none focus:ring-0
@@ -210,12 +270,19 @@
                   min-w-[240px] py-1">
         {#each searchResults as result}
           <button
-            onclick={() => selectResult(result)}
+            onclick={() => result.class === 'coordinate'
+              ? flyToCoords(parseFloat(result.lat), parseFloat(result.lon))
+              : selectResult(result)}
             class="flex items-center gap-2 w-full text-left px-3 py-1.5
                    text-[11px] text-gray-400 hover:text-gray-200 hover:bg-gray-800/50
                    transition-colors"
           >
-            <span class="truncate">{formatResult(result.display_name)}</span>
+            {#if result.class === 'coordinate'}
+              <Crosshair size={11} class="shrink-0 text-term-cyan/60" />
+              <span class="text-term-cyan/80">Jump to {result.display_name}</span>
+            {:else}
+              <span class="truncate">{formatResult(result.display_name)}</span>
+            {/if}
           </button>
         {/each}
       </div>
