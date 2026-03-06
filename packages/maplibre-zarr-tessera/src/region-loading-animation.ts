@@ -97,7 +97,7 @@ export class RegionLoadingAnimation {
     this.canvas = document.createElement('canvas');
     this.canvas.width = this.cw;
     this.canvas.height = this.ch;
-    this.ctx = this.canvas.getContext('2d')!;
+    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true })!;
 
     // Corners for MapLibre ImageSource (TL, TR, BR, BL)
     this.corners = [

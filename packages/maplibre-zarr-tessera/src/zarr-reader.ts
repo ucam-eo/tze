@@ -16,7 +16,8 @@ export interface ZarrStore {
  */
 export async function openStore(url: string): Promise<ZarrStore> {
   const fetchStore = new zarr.FetchStore(url);
-  const rootLoc = zarr.root(fetchStore);
+  const store = new zarr.CoalescingStore(fetchStore);
+  const rootLoc = zarr.root(store);
   const group = await zarr.open(rootLoc, { kind: 'group' });
   const attrs = group.attrs as Record<string, unknown>;
 
