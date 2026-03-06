@@ -60,6 +60,11 @@ export class RegionLoadingAnimation {
 
   // Polygon in canvas coordinates
   private polyPath: { x: number; y: number }[] = [];
+  // Polygon centroid in canvas coordinates
+  private centroidX: number = 0;
+  private centroidY: number = 0;
+  // Mercator correction: scale x by this factor so circles/text appear undistorted
+  private hudScaleX: number = 1;
 
   // Canvas dimensions
   private cw: number;
@@ -105,6 +110,30 @@ export class RegionLoadingAnimation {
       x: ((lng - west) / (east - west)) * this.cw,
       y: ((north - lat) / (north - south)) * this.ch,
     }));
+
+    // Compute polygon centroid (signed-area weighted)
+    const pp = this.polyPath;
+    let areaSum = 0, cxSum = 0, cySum = 0;
+    for (let i = 0, j = pp.length - 1; i < pp.length; j = i++) {
+      const cross = pp[j].x * pp[i].y - pp[i].x * pp[j].y;
+      areaSum += cross;
+      cxSum += (pp[j].x + pp[i].x) * cross;
+      cySum += (pp[j].y + pp[i].y) * cross;
+    }
+    if (Math.abs(areaSum) > 1e-6) {
+      this.centroidX = cxSum / (3 * areaSum);
+      this.centroidY = cySum / (3 * areaSum);
+    } else {
+      // Degenerate polygon — fallback to bbox centre
+      this.centroidX = this.cw / 2;
+      this.centroidY = this.ch / 2;
+    }
+
+    // Mercator correction: on the map, 1° longitude appears cos(lat) times
+    // as wide as 1° latitude. Our canvas maps degrees linearly, so we need
+    // to stretch x by 1/cos(lat) when drawing the HUD so circles appear round.
+    const centerLat = (south + north) / 2;
+    this.hudScaleX = 1 / Math.cos(centerLat * Math.PI / 180);
 
     // Initialize data rain
     this.initRain();
@@ -204,8 +233,8 @@ export class RegionLoadingAnimation {
     const elapsed = (t - this.startTime) / 1000;
     const progress = this.total > 0 ? this.loaded / this.total : 0;
     const tau = Math.PI * 2;
-    const cx = w / 2;
-    const cy = h / 2;
+    const cx = this.centroidX;
+    const cy = this.centroidY;
 
     ctx.clearRect(0, 0, w, h);
 
@@ -403,7 +432,11 @@ export class RegionLoadingAnimation {
     ctx.beginPath(); ctx.moveTo(w - bInset - bLen, h - bInset); ctx.lineTo(w - bInset, h - bInset); ctx.lineTo(w - bInset, h - bInset - bLen); ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // --- HUD centre: progress ring ---
+    // --- HUD centre: progress ring (aspect-corrected at polygon centroid) ---
+    ctx.save();
+    ctx.translate(this.centroidX, this.centroidY);
+    ctx.scale(this.hudScaleX, 1); // correct for Mercator distortion
+
     const ringR = Math.min(w, h) * 0.12;
 
     // Spinning outer ring
@@ -411,7 +444,7 @@ export class RegionLoadingAnimation {
     ctx.lineWidth = 1;
     const spin1 = elapsed * 1.5;
     ctx.beginPath();
-    ctx.arc(cx, cy, ringR * 1.3, spin1, spin1 + tau * 0.65);
+    ctx.arc(0, 0, ringR * 1.3, spin1, spin1 + tau * 0.65);
     ctx.stroke();
 
     // Counter-spin dashed
@@ -419,7 +452,7 @@ export class RegionLoadingAnimation {
     ctx.strokeStyle = 'rgba(0, 180, 220, 0.1)';
     const spin2 = -elapsed * 0.8;
     ctx.beginPath();
-    ctx.arc(cx, cy, ringR * 1.5, spin2, spin2 + tau);
+    ctx.arc(0, 0, ringR * 1.5, spin2, spin2 + tau);
     ctx.stroke();
     ctx.setLineDash([]);
 
@@ -431,8 +464,8 @@ export class RegionLoadingAnimation {
       const inner = ringR * 1.05;
       const outer = i % 12 === 0 ? ringR * 1.2 : ringR * 1.1;
       ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a) * inner, cy + Math.sin(a) * inner);
-      ctx.lineTo(cx + Math.cos(a) * outer, cy + Math.sin(a) * outer);
+      ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+      ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
       ctx.stroke();
     }
 
@@ -444,7 +477,7 @@ export class RegionLoadingAnimation {
     ctx.strokeStyle = 'rgba(0, 229, 255, 0.05)';
     ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.arc(cx, cy, ringR, 0, tau);
+    ctx.arc(0, 0, ringR, 0, tau);
     ctx.stroke();
 
     if (progress > 0) {
@@ -453,22 +486,22 @@ export class RegionLoadingAnimation {
       ctx.lineWidth = 10;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.arc(cx, cy, ringR, arcStart, arcStart + arcEnd);
+      ctx.arc(0, 0, ringR, arcStart, arcStart + arcEnd);
       ctx.stroke();
 
       // Main arc
       ctx.strokeStyle = 'rgba(0, 229, 255, 0.9)';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(cx, cy, ringR, arcStart, arcStart + arcEnd);
+      ctx.arc(0, 0, ringR, arcStart, arcStart + arcEnd);
       ctx.stroke();
       ctx.lineCap = 'butt';
 
       // Arc tip glow
       if (progress < 1) {
         const tipA = arcStart + arcEnd;
-        const tx2 = cx + Math.cos(tipA) * ringR;
-        const ty2 = cy + Math.sin(tipA) * ringR;
+        const tx2 = Math.cos(tipA) * ringR;
+        const ty2 = Math.sin(tipA) * ringR;
         const tg = ctx.createRadialGradient(tx2, ty2, 0, tx2, ty2, 8);
         tg.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
         tg.addColorStop(0.4, 'rgba(0, 229, 255, 0.4)');
@@ -478,7 +511,7 @@ export class RegionLoadingAnimation {
       }
     }
 
-    // Percentage
+    // Percentage — scale text inversely so font renders at correct size
     const pct = Math.round(progress * 100);
     const fontSize = Math.max(14, Math.round(ringR * 0.7));
     ctx.font = `bold ${fontSize}px monospace`;
@@ -487,7 +520,7 @@ export class RegionLoadingAnimation {
     ctx.shadowColor = 'rgba(0, 229, 255, 0.6)';
     ctx.shadowBlur = 10;
     ctx.fillStyle = `rgba(0, 229, 255, ${0.85 + 0.15 * Math.sin(elapsed * 4)})`;
-    ctx.fillText(`${pct}%`, cx, cy - fontSize * 0.15);
+    ctx.fillText(`${pct}%`, 0, -fontSize * 0.15);
     ctx.shadowBlur = 0;
 
     // Sub-label
@@ -496,13 +529,15 @@ export class RegionLoadingAnimation {
     ctx.fillStyle = `rgba(0, 229, 255, ${0.3 + 0.1 * Math.sin(elapsed * 2)})`;
     const labels = ['ACQUIRING', 'EMBEDDING', 'SCANNING', 'ANALYSING'];
     const labelIdx = Math.floor(elapsed / 2) % labels.length;
-    ctx.fillText(labels[labelIdx], cx, cy + fontSize * 0.55);
+    ctx.fillText(labels[labelIdx], 0, fontSize * 0.55);
 
     // Tile count
     const countSize = Math.max(7, Math.round(ringR * 0.18));
     ctx.font = `${countSize}px monospace`;
     ctx.fillStyle = 'rgba(0, 229, 255, 0.2)';
-    ctx.fillText(`${this.loaded}/${this.total} TILES`, cx, cy + fontSize * 0.55 + countSize * 1.3);
+    ctx.fillText(`${this.loaded}/${this.total} TILES`, 0, fontSize * 0.55 + countSize * 1.3);
+
+    ctx.restore(); // end HUD transform
 
     // --- Scanline noise overlay (subtle) ---
     const imgData = ctx.getImageData(0, 0, w, h);
