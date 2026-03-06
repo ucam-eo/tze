@@ -1510,7 +1510,8 @@ export class ZarrTesseraSource {
     for (const vid of [
       'vector-landuse', 'vector-landcover', 'vector-water-fill', 'vector-waterway',
       'vector-water-line', 'vector-aeroway', 'vector-boundary',
-      'vector-roads', 'vector-buildings', 'vector-road-labels',
+      'vector-roads', 'vector-rail', 'vector-paths',
+      'vector-buildings', 'vector-road-labels',
       'vector-poi', 'vector-labels',
     ]) {
       if (this.map!.getLayer(vid)) this.map!.moveLayer(vid);

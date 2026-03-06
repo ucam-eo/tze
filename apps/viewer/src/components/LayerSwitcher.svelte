@@ -7,7 +7,8 @@
   const VECTOR_LAYER_IDS = [
     'vector-landuse', 'vector-landcover', 'vector-water-fill', 'vector-waterway',
     'vector-water-line', 'vector-aeroway', 'vector-boundary',
-    'vector-roads', 'vector-buildings', 'vector-road-labels',
+    'vector-roads', 'vector-rail', 'vector-paths',
+    'vector-buildings', 'vector-road-labels',
     'vector-poi', 'vector-labels',
   ];
 
@@ -184,27 +185,41 @@
       },
     });
 
-    // Roads — white lines
+    // Roads — solid white lines
     add('vector-roads', {
       type: 'line',
       'source-layer': 'transportation',
-      filter: ['in', 'class', 'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service', 'path', 'rail', 'track'],
+      filter: ['in', 'class', 'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'],
       paint: {
-        'line-color': ['match', ['get', 'class'],
-          'rail', 'rgba(200, 160, 120, 0.5)',
-          'path', 'rgba(255, 255, 255, 0.3)',
-          'track', 'rgba(255, 255, 255, 0.25)',
-          'rgba(255, 255, 255, 0.6)',
-        ],
+        'line-color': 'rgba(255, 255, 255, 0.6)',
         'line-width': ['interpolate', ['linear'], ['zoom'],
-          10, ['match', ['get', 'class'], 'motorway', 1.5, 'trunk', 1.2, 'primary', 1, 'rail', 0.8, 0.5],
-          16, ['match', ['get', 'class'], 'motorway', 4, 'trunk', 3, 'primary', 2.5, 'secondary', 2, 'rail', 1.5, 1],
+          10, ['match', ['get', 'class'], 'motorway', 1.5, 'trunk', 1.2, 'primary', 1, 0.5],
+          16, ['match', ['get', 'class'], 'motorway', 4, 'trunk', 3, 'primary', 2.5, 'secondary', 2, 1],
         ],
-        'line-dasharray': ['match', ['get', 'class'],
-          'rail', ['literal', [2, 2]],
-          'path', ['literal', [1, 1]],
-          ['literal', [1, 0]],
-        ],
+      },
+    });
+
+    // Rail — dashed brown
+    add('vector-rail', {
+      type: 'line',
+      'source-layer': 'transportation',
+      filter: ['==', 'class', 'rail'],
+      paint: {
+        'line-color': 'rgba(200, 160, 120, 0.5)',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.8, 16, 1.5],
+        'line-dasharray': [2, 2],
+      },
+    });
+
+    // Paths/tracks — dashed faint
+    add('vector-paths', {
+      type: 'line',
+      'source-layer': 'transportation',
+      filter: ['in', 'class', 'path', 'track'],
+      paint: {
+        'line-color': 'rgba(255, 255, 255, 0.25)',
+        'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.5, 16, 1],
+        'line-dasharray': [1, 1],
       },
     });
 
