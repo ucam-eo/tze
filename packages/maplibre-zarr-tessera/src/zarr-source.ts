@@ -134,7 +134,11 @@ export class ZarrTesseraSource {
     if (this.previewLayer) {
         this.previewLayer.setOpacity(opacity);
     }
-    // Update embedding chunk layers (loaded via double-click)
+    // Update region-wide RGB overlay
+    if (this.map.getLayer('zarr-rgb-overlay-lyr')) {
+      this.map.setPaintProperty('zarr-rgb-overlay-lyr', 'raster-opacity', opacity);
+    }
+    // Update any remaining per-tile chunk layers
     const style = this.map.getStyle();
     if (!style?.layers) return;
     for (const layer of style.layers) {
