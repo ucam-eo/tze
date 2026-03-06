@@ -12,7 +12,7 @@
     endTutorial,
   } from '../stores/tutorial';
   import { mapInstance } from '../stores/map';
-  import { zarrSource, metadata } from '../stores/zarr';
+  import { sourceManager, metadata } from '../stores/zarr';
   import { activeTool } from '../stores/tools';
   import { simThreshold, simScores, simRefEmbedding, simSelectedPixel, simEmbeddingTileCount } from '../stores/similarity';
   import { classes, labels, isClassified, classificationOpacity, kValue, confidenceThreshold } from '../stores/classifier';
@@ -90,11 +90,17 @@
 
     return {
       map,
-      zarrSource: get(zarrSource),
+      zarrSource: (() => {
+        // Tutorials operate single-zone — give them the first open source
+        const mgr = get(sourceManager);
+        if (!mgr) return null;
+        const sources = mgr.getActiveSources();
+        return sources.size > 0 ? sources.values().next().value : null;
+      })(),
       stores: {
         activeTool,
         simThreshold,
-        zarrSource,
+        zarrSource: sourceManager as any, // tutorials use store.subscribe but call mgr methods
         metadata,
         simScores,
         simRefEmbedding,
@@ -119,17 +125,17 @@
       },
       waitForEvent(event: string, timeout = 30000) {
         return new Promise<void>((resolve) => {
-          const src = get(zarrSource);
-          if (!src) { resolve(); return; }
+          const mgr = get(sourceManager);
+          if (!mgr) { resolve(); return; }
           const timer = setTimeout(() => {
-            src.off(event, handler);
+            mgr.off(event, handler);
             resolve();
           }, timeout);
           const handler = () => {
             clearTimeout(timer);
             resolve();
           };
-          src.on(event, handler);
+          mgr.on(event, handler);
         });
       },
       similarityClick(lng: number, lat: number) {

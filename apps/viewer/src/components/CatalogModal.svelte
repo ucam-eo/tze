@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { loadCatalog, pointInBbox } from '../lib/stac';
   import {
-    catalogUrl, zones, activeZoneId, catalogStatus, catalogError, switchZone,
+    catalogUrl, zones, activeZoneId, catalogStatus, catalogError, initManager,
   } from '../stores/stac';
   import { mapInstance } from '../stores/map';
   import { status, globalPreviewUrl, globalPreviewBounds } from '../stores/zarr';
@@ -44,16 +44,19 @@
       $catalogStatus = 'loaded';
       $status = `${result.zones.length} zones discovered${result.globalPreviewUrl ? ' (global preview available)' : ''}`;
 
-      // Auto-switch to the zone under the current map center
+      // Initialize the multi-zone source manager
       const map = $mapInstance;
       if (map && result.zones.length > 0) {
         const center = map.getCenter();
+        // Find the zone under the current map center for initial load
+        let initialZoneId: string | undefined;
         for (const zone of result.zones) {
           if (pointInBbox(center.lng, center.lat, zone.bbox)) {
-            switchZone(zone.id);
+            initialZoneId = zone.id;
             break;
           }
         }
+        await initManager(initialZoneId ?? result.zones[0].id);
       }
     } catch (err) {
       $catalogStatus = 'error';

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Search, Tags, Scan } from 'lucide-svelte';
   import { activeTool, type ToolId } from '../stores/tools';
-  import { zarrSource, metadata } from '../stores/zarr';
+  import { sourceManager, metadata } from '../stores/zarr';
   import { segmentVisible } from '../stores/segmentation';
   import SimilaritySearch from './SimilaritySearch.svelte';
   import LabelPanel from './LabelPanel.svelte';
@@ -28,7 +28,7 @@
     }
 
     // Clear classification overlays when leaving similarity/classifier
-    $zarrSource?.clearClassificationOverlays();
+    $sourceManager?.clearClassificationOverlays();
 
     $activeTool = id;
 

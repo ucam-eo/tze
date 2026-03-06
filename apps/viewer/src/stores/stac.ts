@@ -1,8 +1,8 @@
 import { writable, get } from 'svelte/store';
-import { ZarrTesseraSource } from '@ucam-eo/maplibre-zarr-tessera';
+import { ZarrSourceManager } from '@ucam-eo/maplibre-zarr-tessera';
 import type { ZoneDescriptor } from '../lib/stac';
 import { mapInstance } from './map';
-import { zarrSource, metadata, bands, opacity, preview, loading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
+import { sourceManager, metadata, bands, opacity, preview, loading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
 
 export const catalogUrl = writable('https://dl2.geotessera.org/zarr/v1/catalog.json');
 export const zones = writable<ZoneDescriptor[]>([]);
@@ -11,48 +11,76 @@ export const catalogStatus = writable<'idle' | 'loading' | 'loaded' | 'error'>('
 export const catalogError = writable<string>('');
 
 /**
- * Switch the active zarr source to a different zone.
- * Used by both TopBar (zone dropdown) and App.svelte (auto-switch on pan).
+ * Initialize the multi-zone source manager.
+ * Replaces the old single-zone switchZone() approach.
  */
-export async function switchZone(zoneId: string): Promise<void> {
-  const zone = get(zones).find(z => z.id === zoneId);
-  if (!zone || zoneId === get(activeZoneId)) return;
-
+export async function initManager(initialZoneId?: string): Promise<void> {
+  const allZones = get(zones);
   const map = get(mapInstance);
-  if (!map) return;
+  if (!map || allZones.length === 0) return;
 
-  // Remove old source
-  const oldSource = get(zarrSource);
-  if (oldSource) {
-    oldSource.remove();
-    zarrSource.set(null);
-    metadata.set(null);
-  }
+  // Remove old manager
+  const oldManager = get(sourceManager);
+  if (oldManager) oldManager.remove();
 
-  status.set(`Loading zone ${zone.utmZone}...`);
+  status.set('Initializing...');
 
   try {
     const mobile = window.innerWidth < 640 || /iPhone|iPad|Android/i.test(navigator.userAgent);
-    const source = new ZarrTesseraSource({
-      url: zone.zarrUrl,
-      bands: get(bands),
-      opacity: get(opacity),
-      preview: get(preview),
-      globalPreviewUrl: get(globalPreviewUrl),
-      globalPreviewBounds: get(globalPreviewBounds) ?? undefined,
-      maxCached: mobile ? 4 : undefined,
-    });
+    const manager = new ZarrSourceManager(
+      allZones.map(z => ({ id: z.id, bbox: z.bbox, zarrUrl: z.zarrUrl })),
+      {
+        bands: get(bands),
+        opacity: get(opacity),
+        preview: get(preview),
+        globalPreviewUrl: get(globalPreviewUrl),
+        globalPreviewBounds: get(globalPreviewBounds) ?? undefined,
+        maxCached: mobile ? 4 : undefined,
+      },
+    );
 
-    source.on('metadata-loaded', (meta) => {
+    manager.on('metadata-loaded', (meta) => {
       metadata.set(meta);
       status.set(`Loaded: zone ${meta.utmZone}`);
     });
-    source.on('loading', (p) => loading.set(p));
-    source.on('error', (err) => status.set(`Error: ${err.message}`));
+    manager.on('loading', (p) => loading.set(p));
+    manager.on('error', (err) => status.set(`Error: ${err.message}`));
 
-    await source.addTo(map);
-    zarrSource.set(source);
+    await manager.addTo(map);
+    sourceManager.set(manager);
+
+    // Open the initial zone so the preview layer appears
+    if (initialZoneId) {
+      const zone = allZones.find(z => z.id === initialZoneId);
+      if (zone) {
+        await manager.getSource(zone.id);
+        activeZoneId.set(zone.id);
+      }
+    }
+
+    catalogStatus.set('loaded');
+    status.set('Ready');
+  } catch (err) {
+    status.set(`Error: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Switch the active zone. Opens the zone source if not already open.
+ * Kept for compatibility during migration — the manager handles everything.
+ */
+export async function switchZone(zoneId: string): Promise<void> {
+  const manager = get(sourceManager);
+  if (!manager) return;
+
+  const zone = get(zones).find(z => z.id === zoneId);
+  if (!zone) return;
+
+  status.set(`Loading zone ${zone.utmZone}...`);
+  try {
+    await manager.getSource(zone.id);
     activeZoneId.set(zoneId);
+    status.set(`Loaded: zone ${zone.utmZone}`);
   } catch (err) {
     status.set(`Error: ${(err as Error).message}`);
   }

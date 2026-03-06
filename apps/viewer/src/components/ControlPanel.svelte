@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { zarrSource, metadata, opacity } from '../stores/zarr';
+  import { sourceManager, metadata, opacity } from '../stores/zarr';
 
   const visible = $derived(!!$metadata);
 
   function updateOpacity(val: number) {
     $opacity = val;
-    $zarrSource?.setOpacity(val);
+    $sourceManager?.setOpacity(val);
   }
 </script>
 

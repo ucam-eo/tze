@@ -1,6 +1,6 @@
 <script lang="ts">
   import { get } from 'svelte/store';
-  import { zarrSource } from '../stores/zarr';
+  import { sourceManager } from '../stores/zarr';
   import { simScores, simRefEmbedding, simSelectedPixel, simThreshold, simEmbeddingTileCount } from '../stores/similarity';
   import { roiLoading } from '../stores/drawing';
   import { computeSimilarityScores, renderSimilarityCanvas } from '../lib/similarity';
@@ -11,14 +11,14 @@
 
   // Track embedding loads via events
   $effect(() => {
-    const src = $zarrSource;
-    if (!src) { $simEmbeddingTileCount = 0; return; }
-    $simEmbeddingTileCount = src.regionTileCount();
+    const mgr = $sourceManager;
+    if (!mgr) { $simEmbeddingTileCount = 0; return; }
+    $simEmbeddingTileCount = mgr.totalTileCount();
     const handler = () => {
-      $simEmbeddingTileCount = src.regionTileCount();
+      $simEmbeddingTileCount = mgr.totalTileCount();
     };
-    src.on('embeddings-loaded', handler);
-    return () => src.off('embeddings-loaded', handler);
+    mgr.on('embeddings-loaded', handler);
+    return () => mgr.off('embeddings-loaded', handler);
   });
 
   // Recompute similarity when ROI loading finishes (transitions from loading to idle)
@@ -40,9 +40,9 @@
 
   /** Called from App.svelte when the user clicks in similarity mode. */
   export function handleClick(lng: number, lat: number) {
-    const src = $zarrSource;
-    if (!src) return;
-    const emb = src.getEmbeddingAt(lng, lat);
+    const mgr = $sourceManager;
+    if (!mgr) return;
+    const emb = mgr.getEmbeddingAt(lng, lat);
     if (!emb) return;
 
     $simSelectedPixel = { ci: emb.ci, cj: emb.cj, row: emb.row, col: emb.col, lng, lat };
@@ -50,22 +50,24 @@
     runCompute();
   }
 
-  /** CPU compute — runs once per reference pixel selection. */
+  /** CPU compute — runs once per reference pixel selection.
+   *  For now uses the first zone's embedding region (single-zone path).
+   *  Phase 3 will iterate all zones. */
   function runCompute() {
-    const src = $zarrSource;
-    if (!src || !$simRefEmbedding) return;
+    const mgr = $sourceManager;
+    if (!mgr || !$simRefEmbedding) return;
     if (isComputing) { pendingRecompute = true; return; }
     isComputing = true;
 
     try {
-      src.clearSimilarityOverlay();
-      if (!src.embeddingRegion) return;
-      $simScores = computeSimilarityScores(
-        src.embeddingRegion,
-        $simRefEmbedding,
-      );
+      mgr.clearSimilarityOverlay();
+      // Use first zone with embeddings for now
+      const regions = mgr.getEmbeddingRegions();
+      if (regions.size === 0) return;
+      const [firstZoneId, firstRegion] = regions.entries().next().value;
+      $simScores = computeSimilarityScores(firstRegion, $simRefEmbedding);
       overlayCanvas = undefined; // force new canvas for new region geometry
-      applyThreshold();
+      applyThreshold(firstZoneId);
     } finally {
       isComputing = false;
       if (pendingRecompute) {
@@ -75,20 +77,24 @@
     }
   }
 
-  /** Render threshold into a single region-wide canvas and push to map.
-   *  One PNG encode + one ImageSource — no per-tile overhead. */
-  function applyThreshold() {
-    const src = $zarrSource;
+  /** Render threshold into a single region-wide canvas and push to map. */
+  function applyThreshold(zoneId?: string) {
+    const mgr = $sourceManager;
     const result = $simScores;
     const threshold = $simThreshold;
-    if (!src || !result) return;
+    if (!mgr || !result) return;
 
     overlayCanvas = renderSimilarityCanvas(result, threshold, overlayCanvas);
-    src.setSimilarityOverlay(overlayCanvas);
+    // Route overlay to the correct zone's source
+    const resolvedZoneId = zoneId ?? mgr.getEmbeddingRegions().keys().next().value;
+    if (resolvedZoneId) {
+      const src = mgr.getOpenSource(resolvedZoneId);
+      src?.setSimilarityOverlay(overlayCanvas);
+    }
   }
 
   function handleClear() {
-    $zarrSource?.clearSimilarityOverlay();
+    $sourceManager?.clearSimilarityOverlay();
     $simSelectedPixel = null;
     $simRefEmbedding = null;
     $simScores = null;

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { zarrSource } from '../stores/zarr';
+  import { sourceManager } from '../stores/zarr';
   import { simScores, simRefEmbedding, simSelectedPixel, simThreshold, simEmbeddingTileCount } from '../stores/similarity';
   import { roiLoading } from '../stores/drawing';
   import { subsampleEmbeddings, subsampleUniform } from '../lib/umap-subsample';
@@ -86,8 +86,12 @@
   }
 
   async function runUmap() {
-    const src = $zarrSource;
-    if (!src || !src.embeddingRegion || src.regionTileCount() === 0) return;
+    const mgr = $sourceManager;
+    if (!mgr || mgr.totalTileCount() === 0) return;
+    // Use first zone with embeddings
+    const regions = mgr.getEmbeddingRegions();
+    if (regions.size === 0) return;
+    const [_firstZoneId, firstRegion] = regions.entries().next().value;
 
     killWorker();
     status = 'Sampling...';
@@ -96,7 +100,7 @@
     const ref = $simRefEmbedding;
     const pixel = $simSelectedPixel;
 
-    const region = src.embeddingRegion!;
+    const region = firstRegion;
     const sample = (simResult && ref && pixel)
       ? subsampleEmbeddings(region, simResult, ref, pixel)
       : subsampleUniform(region);

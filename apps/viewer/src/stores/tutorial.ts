@@ -1,7 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import type { TutorialDef, TutorialStep } from '../lib/tutorial';
 import { simScores, simRefEmbedding, simSelectedPixel, simThreshold } from './similarity';
-import { zarrSource } from './zarr';
+import { sourceManager } from './zarr';
 import { classes, labels, isClassified, activeClassName } from './classifier';
 
 export const tutorialRegistry = writable<TutorialDef[]>([]);
@@ -35,8 +35,8 @@ export function startTutorial(id: string) {
   if (!def) return;
 
   // Reset similarity + classifier state so the tutorial starts clean
-  const src = get(zarrSource);
-  if (src) src.clearClassificationOverlays();
+  const mgr = get(sourceManager);
+  if (mgr) mgr.clearClassificationOverlays();
   simSelectedPixel.set(null);
   simRefEmbedding.set(null);
   simScores.set([]);

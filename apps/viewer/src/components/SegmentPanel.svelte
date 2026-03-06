@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronDown, Sun } from 'lucide-svelte';
-  import { zarrSource } from '../stores/zarr';
+  import { sourceManager } from '../stores/zarr';
   import { segmentPolygons } from '../stores/segmentation';
   import {
     runSolarSegmentation,
@@ -28,26 +28,31 @@
   const activeDetector = $derived(DETECTORS.find(d => d.id === selectedDetector) ?? DETECTORS[0]);
 
   $effect(() => {
-    const src = $zarrSource;
-    if (!src) { embeddingTileCount = 0; return; }
-    embeddingTileCount = src.regionTileCount();
-    const handler = () => { embeddingTileCount = src.regionTileCount(); };
-    src.on('embeddings-loaded', handler);
-    return () => src.off('embeddings-loaded', handler);
+    const mgr = $sourceManager;
+    if (!mgr) { embeddingTileCount = 0; return; }
+    embeddingTileCount = mgr.totalTileCount();
+    const handler = () => { embeddingTileCount = mgr.totalTileCount(); };
+    mgr.on('embeddings-loaded', handler);
+    return () => mgr.off('embeddings-loaded', handler);
   });
 
   async function handleDetect() {
-    const src = $zarrSource;
-    if (!src || isRunning) return;
+    const mgr = $sourceManager;
+    if (!mgr || isRunning) return;
     isRunning = true;
     errorMsg = null;
     progressDone = 0;
     progressTotal = 0;
 
     try {
-      if (!src.embeddingRegion) return;
+      // Use first zone with embeddings (Phase 3 will iterate all zones)
+      const regions = mgr.getEmbeddingRegions();
+      if (regions.size === 0) return;
+      const [firstZoneId, firstRegion] = regions.entries().next().value;
+      const src = mgr.getOpenSource(firstZoneId);
+      if (!src) return;
       const results = await runSolarSegmentation(
-        src.embeddingRegion,
+        firstRegion,
         src,
         threshold,
         (done, total) => {

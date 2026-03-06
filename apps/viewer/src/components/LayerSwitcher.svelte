@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Globe, Grid3x3, Square, Layers } from 'lucide-svelte';
   import { mapInstance } from '../stores/map';
-  import { zarrSource, gridVisible, utmBoundaryVisible } from '../stores/zarr';
+  import { sourceManager, gridVisible, utmBoundaryVisible } from '../stores/zarr';
 
   const VECTOR_SOURCE_ID = 'vector-overlay-src';
   const VECTOR_LAYER_IDS = [
@@ -20,7 +20,7 @@
     const map = $mapInstance;
     if (map && vectorOverlay && !map.getSource(VECTOR_SOURCE_ID)) {
       addVectorOverlay(map);
-      $zarrSource?.raiseAllLayers();
+      $sourceManager?.raiseAllLayers();
     }
   });
 
@@ -57,7 +57,7 @@
     } else {
       removeVectorOverlay(map);
     }
-    $zarrSource?.raiseAllLayers();
+    $sourceManager?.raiseAllLayers();
   }
 
   function addVectorOverlay(map: maplibregl.Map) {
@@ -304,12 +304,12 @@
 
   function toggleGrid() {
     $gridVisible = !$gridVisible;
-    $zarrSource?.setGridVisible($gridVisible);
+    $sourceManager?.setGridVisible($gridVisible);
   }
 
   function toggleUtm() {
     $utmBoundaryVisible = !$utmBoundaryVisible;
-    $zarrSource?.setUtmBoundaryVisible($utmBoundaryVisible);
+    $sourceManager?.setUtmBoundaryVisible($utmBoundaryVisible);
   }
 </script>
 

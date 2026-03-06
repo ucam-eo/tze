@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { zarrSource } from '../stores/zarr';
+  import { sourceManager } from '../stores/zarr';
   import { importOsmLabels } from '../stores/classifier';
   import { queryOverpass, type OsmCategory } from '../lib/overpass';
   import { sampleOsmCategories, type SampleProgress } from '../lib/osm-sampler';
@@ -24,12 +24,12 @@
 
   // Track embedding loads
   $effect(() => {
-    const src = $zarrSource;
-    if (!src) { embeddingTileCount = 0; return; }
-    embeddingTileCount = src.regionTileCount();
-    const handler = () => { embeddingTileCount = src.regionTileCount(); };
-    src.on('embeddings-loaded', handler);
-    return () => src.off('embeddings-loaded', handler);
+    const mgr = $sourceManager;
+    if (!mgr) { embeddingTileCount = 0; return; }
+    embeddingTileCount = mgr.totalTileCount();
+    const handler = () => { embeddingTileCount = mgr.totalTileCount(); };
+    mgr.on('embeddings-loaded', handler);
+    return () => mgr.off('embeddings-loaded', handler);
   });
 
   const canQuery = $derived(embeddingTileCount > 0);
@@ -61,9 +61,9 @@
   }
 
   async function handleQuery() {
-    const src = $zarrSource;
-    if (!src) return;
-    const bbox = src.embeddingBoundsLngLat();
+    const mgr = $sourceManager;
+    if (!mgr) return;
+    const bbox = mgr.embeddingBoundsLngLat();
     if (!bbox) return;
 
     phase = 'querying';
@@ -109,7 +109,14 @@
   }
 
   async function handleImport() {
-    const src = $zarrSource;
+    const mgr = $sourceManager;
+    if (!mgr) return;
+
+    // Use first zone with embeddings for OSM sampling
+    const regions = mgr.getEmbeddingRegions();
+    if (regions.size === 0) return;
+    const [firstZoneId] = regions.entries().next().value;
+    const src = mgr.getOpenSource(firstZoneId);
     if (!src) return;
 
     const chosen = categories.filter(c => selected.has(c.tag));

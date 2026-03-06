@@ -14,7 +14,7 @@
   import DebugConsole from './components/DebugConsole.svelte';
   import ToolSwitcher from './components/ToolSwitcher.svelte';
   import type SimilaritySearch from './components/SimilaritySearch.svelte';
-  import { zarrSource } from './stores/zarr';
+  import { sourceManager } from './stores/zarr';
   import { get } from 'svelte/store';
   import { activeClass, classes, labels, addLabel, isClassified } from './stores/classifier';
   import { activeTool } from './stores/tools';
@@ -227,15 +227,15 @@
       if (coord) coord.textContent = `${e.lngLat.lng.toFixed(4)}, ${e.lngLat.lat.toFixed(4)}`;
 
       // Tile hover highlight
-      const src = get(zarrSource);
+      const mgr = get(sourceManager);
       const hoverSource = map.getSource('tile-hover') as maplibregl.GeoJSONSource | undefined;
-      if (src && hoverSource) {
-        const chunk = src.getChunkAtLngLat(e.lngLat.lng, e.lngLat.lat);
-        const key = chunk ? `${chunk.ci}_${chunk.cj}` : '';
+      if (mgr && hoverSource) {
+        const chunk = mgr.getChunkAtLngLat(e.lngLat.lng, e.lngLat.lat);
+        const key = chunk ? `${chunk.zoneId}:${chunk.ci}_${chunk.cj}` : '';
         if (key !== hoveredChunkKey) {
           hoveredChunkKey = key;
           if (chunk) {
-            const corners = src.getChunkBoundsLngLat(chunk.ci, chunk.cj);
+            const corners = mgr.getChunkBoundsLngLat(chunk.zoneId, chunk.ci, chunk.cj);
             if (corners) {
               // Cancel any pending fade-out clear
               clearTimeout(hoverFadeTimer);
@@ -275,8 +275,7 @@
       const tipY = e.originalEvent.clientY - 10;
 
       // Check classification pixel under cursor
-      const classifySrc = src ?? get(zarrSource);
-      const classId = classifySrc?.getClassificationAt(e.lngLat.lng, e.lngLat.lat) ?? null;
+      const classId = mgr?.getClassificationAt(e.lngLat.lng, e.lngLat.lat) ?? null;
 
       if (classId != null && classId >= 0) {
         const cls = get(classes).find(c => c.id === classId);
@@ -347,8 +346,8 @@
     // the $ prefix only works in Svelte's reactive context.
     map.on('click', (e) => {
       const tool = get(activeTool);
-      const src = get(zarrSource);
-      if (!src) return;
+      const mgr = get(sourceManager);
+      if (!mgr) return;
 
       if (tool === 'similarity') {
         similarityRef?.handleClick(e.lngLat.lng, e.lngLat.lat);
@@ -359,7 +358,7 @@
         const cls = get(activeClass);
         if (!cls) return;
 
-        const embeddings = src.getEmbeddingsInKernel(e.lngLat.lng, e.lngLat.lat, 1);
+        const embeddings = mgr.getEmbeddingsInKernel(e.lngLat.lng, e.lngLat.lat, 1);
         if (embeddings.length === 0) return;
 
         for (const emb of embeddings) {

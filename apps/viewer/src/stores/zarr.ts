@@ -1,7 +1,7 @@
 import { writable } from 'svelte/store';
-import type { ZarrTesseraSource, StoreMetadata } from '@ucam-eo/maplibre-zarr-tessera';
+import type { StoreMetadata, ZarrSourceManager } from '@ucam-eo/maplibre-zarr-tessera';
 
-export const zarrSource = writable<ZarrTesseraSource | null>(null);
+export const sourceManager = writable<ZarrSourceManager | null>(null);
 export const metadata = writable<StoreMetadata | null>(null);
 export const bands = writable<[number, number, number]>([0, 1, 2]);
 export const opacity = writable(0.8);

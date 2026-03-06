@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { zarrSource } from '../stores/zarr';
+  import { sourceManager } from '../stores/zarr';
   import type { DebugLogEntry } from '@ucam-eo/maplibre-zarr-tessera';
 
   let logs = $state<DebugLogEntry[]>([]);
@@ -37,22 +37,22 @@
     return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}.${d.getMilliseconds().toString().padStart(3, '0')}`;
   }
 
-  // Track source subscription
-  let currentSource: typeof $zarrSource = null;
+  // Track manager subscription
+  let currentManager: typeof $sourceManager = null;
 
   $effect(() => {
-    const src = $zarrSource;
-    if (src !== currentSource) {
-      if (currentSource) {
-        currentSource.off('debug', onDebug);
+    const mgr = $sourceManager;
+    if (mgr !== currentManager) {
+      if (currentManager) {
+        currentManager.off('debug', onDebug);
       }
-      if (src) {
-        src.on('debug', onDebug);
-        logs = [{ time: Date.now(), type: 'info', msg: 'Debug console attached to source' }];
+      if (mgr) {
+        mgr.on('debug', onDebug);
+        logs = [{ time: Date.now(), type: 'info', msg: 'Debug console attached to source manager' }];
       } else {
         logs = [];
       }
-      currentSource = src;
+      currentManager = mgr;
     }
   });
 

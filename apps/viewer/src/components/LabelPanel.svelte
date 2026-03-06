@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { zarrSource, metadata } from '../stores/zarr';
+  import { sourceManager, metadata } from '../stores/zarr';
   import {
     classes, labels, activeClassName, activeClass,
     kValue, confidenceThreshold, classificationOpacity, isClassified,
@@ -37,8 +37,8 @@
   }
 
   async function runClassification() {
-    const source = $zarrSource;
-    if (!source || isClassifying) return;
+    const mgr = $sourceManager;
+    if (!mgr || isClassifying) return;
     isClassifying = true;
     classifyProgress = null;
 
@@ -52,11 +52,16 @@
     console.log('[classify] labels:', allLabels.length, 'across classes:', [...byClass.entries()].map(([id, n]) => `id=${id}:${n}`));
 
     try {
-      source.clearClassificationOverlays();
-      if (!source.embeddingRegion) return;
+      mgr.clearClassificationOverlays();
+      // Use first zone with embeddings for now (Phase 3 will iterate all zones)
+      const regions = mgr.getEmbeddingRegions();
+      if (regions.size === 0) return;
+      const [firstZoneId, firstRegion] = regions.entries().next().value;
+      const source = mgr.getOpenSource(firstZoneId);
+      if (!source) return;
       const opacity = $classificationOpacity;
       const results = await classifyTiles(
-        source.embeddingRegion,
+        firstRegion,
         allLabels,
         allClasses,
         $kValue,
@@ -78,13 +83,13 @@
   }
 
   function handleClear() {
-    $zarrSource?.clearClassificationOverlays();
+    $sourceManager?.clearClassificationOverlays();
     $isClassified = false;
   }
 
   function updateClassificationOpacity(val: number) {
     $classificationOpacity = val;
-    $zarrSource?.setClassificationOpacity(val);
+    $sourceManager?.setClassificationOpacity(val);
   }
 </script>
 
