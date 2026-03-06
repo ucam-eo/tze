@@ -63,10 +63,14 @@ export class ZarrTesseraSource {
 
     // Suppress AbortError from MapLibre ImageSource.updateImage internal fetches.
     // These fire when a source is removed while an image load is in flight — benign.
+    // MapLibre emits these through its error event system, not as unhandled rejections.
     this.abortHandler = (e: PromiseRejectionEvent) => {
       if (e.reason?.name === 'AbortError') e.preventDefault();
     };
     window.addEventListener('unhandledrejection', this.abortHandler);
+    map.on('error', (e: { error?: Error }) => {
+      if (e.error?.name === 'AbortError') return;
+    });
 
     try {
       this.debug('fetch', `Opening store: ${this.opts.url}`);
@@ -1355,17 +1359,32 @@ export class ZarrTesseraSource {
     });
     this.raiseOverlayLayers();
 
-    // Animation loop
+    // Animation loop — throttle updateImage to avoid MapLibre AbortError spam.
+    // Render canvas every frame but only push to MapLibre every ~150ms.
+    let lastPush = 0;
+    let pendingUpdate = false;
+    const PUSH_INTERVAL = 150;
+
     const animate = (t: number) => {
       if (!this.map || !this.map.getSource(sourceId)) return;
       renderFrame(canvas, t);
-      const url = canvas.toDataURL('image/png');
-      try {
+
+      if (t - lastPush >= PUSH_INTERVAL && !pendingUpdate) {
+        pendingUpdate = true;
+        lastPush = t;
+        const url = canvas.toDataURL('image/png');
         const src = this.map.getSource(sourceId) as
           { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => unknown } | undefined;
-        const result = src?.updateImage?.({ url, coordinates: corners });
-        if (result && typeof (result as any).catch === 'function') (result as any).catch(() => {});
-      } catch { /* source removed mid-frame */ }
+        try {
+          const result = src?.updateImage?.({ url, coordinates: corners });
+          if (result && typeof (result as any).then === 'function') {
+            (result as any).then(() => { pendingUpdate = false; }, () => { pendingUpdate = false; });
+          } else {
+            pendingUpdate = false;
+          }
+        } catch { pendingUpdate = false; }
+      }
+
       this.loadingAnimations.set(key, requestAnimationFrame(animate));
     };
     this.loadingAnimations.set(key, requestAnimationFrame(animate));
