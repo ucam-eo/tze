@@ -21,10 +21,14 @@
   import TutorialOverlay from './components/TutorialOverlay.svelte';
   import { simEmbeddingTileCount } from './stores/similarity';
   import { registerAllTutorials } from './lib/tutorials/index';
+  import { TerraDraw, TerraDrawPolygonMode, TerraDrawRectangleMode } from 'terra-draw';
+  import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
+  import { drawMode, roiDrawing, roiRegions, addRegion } from './stores/drawing';
 
   let mapContainer: HTMLDivElement;
   let labelMarkers: maplibregl.Marker[] = [];
   let similarityRef: SimilaritySearch | undefined = $state();
+  let terraDraw: TerraDraw | undefined = $state();
 
   function createMarkerElement(color: string, source: 'human' | 'osm'): HTMLElement {
     const el = document.createElement('div');
@@ -151,6 +155,22 @@
         type: 'line',
         source: 'segment-polygons',
         paint: { 'line-color': '#f97316', 'line-width': 1.5, 'line-opacity': 0.8 },
+      });
+
+      // Terra-draw for polygon/rectangle drawing
+      const draw = new TerraDraw({
+        adapter: new TerraDrawMapLibreGLAdapter({ map, lib: maplibregl }),
+        modes: [new TerraDrawPolygonMode(), new TerraDrawRectangleMode()],
+      });
+      terraDraw = draw;
+      draw.on('finish', (id: string | number, ctx: { action: string }) => {
+        if (ctx.action === 'draw') {
+          const feat = draw.getSnapshotFeature(id);
+          if (feat) {
+            addRegion(feat as GeoJSON.Feature);
+            roiDrawing.set(false);
+          }
+        }
       });
     });
 
@@ -324,11 +344,27 @@
     return () => { map.remove(); $mapInstance = null; };
   });
 
+  // Activate/deactivate terra-draw based on roiDrawing store
+  $effect(() => {
+    const draw = terraDraw;
+    if (!draw) return;
+    const drawing = $roiDrawing;
+    const mode = $drawMode;
+    if (drawing) {
+      if (!draw.enabled) draw.start();
+      draw.setMode(mode);
+    } else {
+      if (draw.enabled) draw.stop();
+    }
+  });
+
   $effect(() => {
     const map = $mapInstance;
     if (!map) return;
     const canvas = map.getCanvasContainer();
-    if ($activeTool === 'similarity') {
+    if ($roiDrawing) {
+      canvas.style.cursor = 'crosshair';
+    } else if ($activeTool === 'similarity') {
       canvas.style.cursor = 'crosshair';
     } else if ($activeTool === 'classifier' && $activeClass) {
       canvas.style.cursor = 'crosshair';

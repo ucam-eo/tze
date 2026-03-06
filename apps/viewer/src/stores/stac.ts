@@ -4,7 +4,7 @@ import type { ZoneDescriptor } from '../lib/stac';
 import { mapInstance } from './map';
 import { zarrSource, metadata, bands, opacity, preview, loading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
 
-export const catalogUrl = writable('/zarr/v0/catalog.json');
+export const catalogUrl = writable('/zarr/v1/catalog.json');
 export const zones = writable<ZoneDescriptor[]>([]);
 export const activeZoneId = writable<string | null>(null);
 export const catalogStatus = writable<'idle' | 'loading' | 'loaded' | 'error'>('idle');

@@ -6,6 +6,7 @@
   import SimilaritySearch from './SimilaritySearch.svelte';
   import LabelPanel from './LabelPanel.svelte';
   import SegmentPanel from './SegmentPanel.svelte';
+  import RoiStrip from './RoiStrip.svelte';
 
   const enabled = $derived(!!$metadata);
 
@@ -45,6 +46,8 @@
 
 <div class="transition-opacity" data-tutorial="tool-switcher"
      class:opacity-40={!enabled} class:pointer-events-none={!enabled}>
+
+  <RoiStrip />
 
   <!-- Tool tabs -->
   <div class="flex border-b border-gray-800/60">

@@ -1,0 +1,106 @@
+import { writable, derived, get } from 'svelte/store';
+import { zarrSource } from './zarr';
+
+export type DrawMode = 'polygon' | 'rectangle';
+export type RoiRegion = {
+  id: string;
+  feature: GeoJSON.Feature;
+  chunkKeys: string[]; // "ci_cj" keys loaded for this region
+};
+
+/** Whether terra-draw is currently active for drawing. */
+export const roiDrawing = writable(false);
+
+/** Active terra-draw mode (polygon or rectangle). */
+export const drawMode = writable<DrawMode>('polygon');
+
+/** All drawn ROI regions. */
+export const roiRegions = writable<RoiRegion[]>([]);
+
+/** Loading progress: null when idle. */
+export const roiLoading = writable<{ loaded: number; total: number } | null>(null);
+
+/** Total number of embedding tiles loaded across all regions. */
+export const roiTileCount = derived(roiRegions, ($regions) => {
+  const keys = new Set<string>();
+  for (const r of $regions) {
+    for (const k of r.chunkKeys) keys.add(k);
+  }
+  return keys.size;
+});
+
+let nextId = 0;
+
+/** Called when terra-draw finishes a shape. Starts loading chunks for the region. */
+export async function addRegion(feature: GeoJSON.Feature): Promise<void> {
+  const src = get(zarrSource);
+  if (!src) return;
+
+  const geometry = feature.geometry as GeoJSON.Polygon;
+  const chunks = src.getChunksInRegion(geometry);
+
+  const region: RoiRegion = {
+    id: `roi-${nextId++}`,
+    feature,
+    chunkKeys: [],
+  };
+
+  // Add region immediately (shows in UI with 0 tiles)
+  roiRegions.update(rs => [...rs, region]);
+
+  if (chunks.length === 0) return;
+
+  // Start progressive loading
+  const total = chunks.length;
+  roiLoading.set({ loaded: 0, total });
+
+  await src.loadChunkBatch(chunks, (loaded, t) => {
+    roiLoading.set({ loaded, total: t });
+  });
+
+  // Record which chunks this region owns
+  const loadedKeys = chunks.map(c => `${c.ci}_${c.cj}`).filter(k => src.embeddingCache.has(k));
+  roiRegions.update(rs =>
+    rs.map(r => r.id === region.id ? { ...r, chunkKeys: loadedKeys } : r)
+  );
+
+  roiLoading.set(null);
+}
+
+/** Remove a single region. Evict its exclusive tiles from the embedding cache. */
+export function removeRegion(regionId: string): void {
+  const regions = get(roiRegions);
+  const target = regions.find(r => r.id === regionId);
+  if (!target) return;
+
+  // Find keys owned exclusively by this region
+  const otherKeys = new Set<string>();
+  for (const r of regions) {
+    if (r.id !== regionId) {
+      for (const k of r.chunkKeys) otherKeys.add(k);
+    }
+  }
+  const exclusiveKeys = target.chunkKeys.filter(k => !otherKeys.has(k));
+
+  // Evict exclusive tiles
+  const src = get(zarrSource);
+  if (src) {
+    for (const k of exclusiveKeys) {
+      src.embeddingCache.delete(k);
+    }
+    src.clearClassificationOverlays();
+  }
+
+  roiRegions.update(rs => rs.filter(r => r.id !== regionId));
+}
+
+/** Clear all regions and the entire embedding cache. */
+export function clearAllRegions(): void {
+  const src = get(zarrSource);
+  if (src) {
+    src.embeddingCache.clear();
+    src.clearClassificationOverlays();
+  }
+  roiRegions.set([]);
+  roiLoading.set(null);
+}
