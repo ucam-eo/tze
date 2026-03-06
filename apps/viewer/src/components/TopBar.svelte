@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { ChevronDown, Search, Crosshair } from 'lucide-svelte';
-  import { zones, activeZoneId, catalogStatus, switchZone } from '../stores/stac';
+  import { Search, Crosshair } from 'lucide-svelte';
+  import { zones, catalogStatus } from '../stores/stac';
   import { metadata, loading } from '../stores/zarr';
   import { mapInstance } from '../stores/map';
   import { get } from 'svelte/store';
@@ -11,9 +11,6 @@
   }
 
   let { onOpenCatalog }: Props = $props();
-  let zoneDropdownOpen = $state(false);
-
-  const activeZone = $derived($zones.find(z => z.id === $activeZoneId));
 
   const healthColor = $derived(
     $catalogStatus === 'loaded' ? 'bg-green-400 shadow-[0_0_4px_rgba(74,222,128,0.6)]'
@@ -28,11 +25,6 @@
     : $catalogStatus === 'error' ? 'Error'
     : 'Idle'
   );
-
-  function handleZoneClick(zoneId: string) {
-    switchZone(zoneId);
-    zoneDropdownOpen = false;
-  }
 
   // --- Search ---
   interface NominatimResult {
@@ -292,81 +284,30 @@
   <!-- Spacer -->
   <div class="flex-1"></div>
 
-  <!-- Unified zone / status button -->
-  <div class="relative">
-    <button
-      onclick={() => { zoneDropdownOpen = !zoneDropdownOpen; }}
-      class="flex items-center gap-1.5 px-2 py-1 rounded
-             text-gray-300 hover:bg-gray-800/60 transition-colors"
-    >
-      <div class="w-2 h-2 rounded-full {healthColor}"></div>
-      <span class="text-[11px]">
-        {#if activeZone}
-          UTM {activeZone.utmZone}
-        {:else if $catalogStatus === 'loading'}
-          Loading...
-        {:else if $catalogStatus === 'error'}
-          Error
-        {:else}
-          Connect
-        {/if}
-      </span>
-      {#if $metadata}
-        <span class="hidden sm:inline text-[10px] text-gray-600">EPSG:{$metadata.epsg}</span>
-        <span class="hidden sm:inline text-[10px] text-gray-600">{$metadata.nBands}b</span>
-        {#if $loading.total > 0}
-          <span class="text-[10px] text-term-cyan/60 tabular-nums">{$loading.done}/{$loading.total}</span>
-        {/if}
+  <!-- Status indicator -->
+  <button
+    onclick={onOpenCatalog}
+    class="flex items-center gap-1.5 px-2 py-1 rounded
+           text-gray-300 hover:bg-gray-800/60 transition-colors"
+    title="Catalog settings"
+  >
+    <div class="w-2 h-2 rounded-full {healthColor}"></div>
+    <span class="text-[11px]">
+      {#if $catalogStatus === 'loaded'}
+        {$zones.length} zones
+      {:else if $catalogStatus === 'loading'}
+        Loading...
+      {:else if $catalogStatus === 'error'}
+        Error
+      {:else}
+        Connect
       {/if}
-      <ChevronDown size={12} class="text-gray-500" />
-    </button>
-
-    {#if zoneDropdownOpen}
-      <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-      <div class="fixed inset-0 z-30" onclick={() => { zoneDropdownOpen = false; }}></div>
-      <div class="absolute top-full right-0 mt-1 z-40
-                  bg-gray-950 border border-gray-700/80 rounded shadow-xl
-                  min-w-[180px] py-1">
-
-        <!-- Zone list -->
-        {#each $zones as zone}
-          <button
-            onclick={() => handleZoneClick(zone.id)}
-            class="flex items-center gap-2 w-full text-left px-3 py-1.5
-                   text-[11px] transition-colors
-                   {zone.id === $activeZoneId
-                     ? 'text-term-cyan bg-term-cyan/10'
-                     : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}"
-          >
-            <span class="w-1.5 h-1.5 rounded-full shrink-0
-                         {zone.id === $activeZoneId ? 'bg-green-400' : 'bg-gray-600'}"></span>
-            UTM {zone.utmZone}
-          </button>
-        {/each}
-
-        <!-- Metadata info -->
-        {#if $metadata}
-          <div class="border-t border-gray-800/60 mt-1 pt-1 px-3 py-1.5">
-            <div class="flex flex-col gap-0.5 text-[10px] text-gray-500">
-              <span>EPSG:{$metadata.epsg}</span>
-              <span>{$metadata.shape[1]} x {$metadata.shape[0]} px</span>
-              <span>{$metadata.nBands} bands</span>
-            </div>
-          </div>
-        {/if}
-
-        <!-- Catalog settings -->
-        <div class="border-t border-gray-800/60 mt-1 pt-1">
-          <button
-            onclick={() => { zoneDropdownOpen = false; onOpenCatalog(); }}
-            class="flex items-center gap-2 w-full text-left px-3 py-1.5
-                   text-[11px] text-gray-400 hover:text-gray-200 hover:bg-gray-800/50
-                   transition-colors"
-          >
-            Catalog Settings...
-          </button>
-        </div>
-      </div>
+    </span>
+    {#if $metadata}
+      <span class="hidden sm:inline text-[10px] text-gray-600">{$metadata.nBands}b</span>
+      {#if $loading.total > 0}
+        <span class="text-[10px] text-term-cyan/60 tabular-nums">{$loading.done}/{$loading.total}</span>
+      {/if}
     {/if}
-  </div>
+  </button>
 </div>

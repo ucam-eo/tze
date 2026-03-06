@@ -432,53 +432,7 @@
     }
   });
 
-  // Add/update zone polygon layers when zones change
-  $effect(() => {
-    const map = $mapInstance;
-    const zoneList = $zones;
-    if (!map || zoneList.length === 0) return;
-
-    const geojson: GeoJSON.FeatureCollection = {
-      type: 'FeatureCollection',
-      features: zoneList.map(z => ({
-        type: 'Feature' as const,
-        id: z.id,
-        properties: { id: z.id, utmZone: z.utmZone },
-        geometry: z.geometry,
-      })),
-    };
-
-    if (map.getSource('stac-zones')) {
-      (map.getSource('stac-zones') as maplibregl.GeoJSONSource).setData(geojson);
-    } else {
-      map.addSource('stac-zones', { type: 'geojson', data: geojson });
-      map.addLayer({
-        id: 'stac-zones-line',
-        type: 'line',
-        source: 'stac-zones',
-        paint: {
-          'line-color': '#00e5ff',
-          'line-opacity': 0,
-          'line-width': 1,
-          'line-dasharray': [4, 2],
-        },
-      });
-    }
-  });
-
-  // Highlight active zone border
-  $effect(() => {
-    const map = $mapInstance;
-    const active = $activeZoneId;
-    if (!map || !map.getLayer('stac-zones-line')) return;
-
-    map.setPaintProperty('stac-zones-line', 'line-opacity', [
-      'case',
-      ['==', ['get', 'id'], active ?? ''],
-      0.6,
-      0,
-    ]);
-  });
+  // Zone polygon layers removed — UTM zones are now an implementation detail
 
   // Sync label markers reactively — only visible on classifier tab
   $effect(() => {
