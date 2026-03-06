@@ -440,6 +440,69 @@ export class ZarrTesseraSource {
     return result;
   }
 
+  /** Re-render all embedding chunk tiles using a single global min/max
+   *  across all loaded tiles, so they share a consistent colour scale. */
+  recolorAllChunks(): void {
+    if (!this.map || !this.store) return;
+    const [bR, bG, bB] = this.opts.bands;
+    const nBands = this.store.meta.nBands;
+
+    // First pass: compute global min/max across all cached chunks
+    let gMinR = 127, gMaxR = -128, gMinG = 127, gMaxG = -128, gMinB = 127, gMaxB = -128;
+    for (const [, entry] of this.chunkCache) {
+      if (entry.isPreview || !entry.embRaw || !entry.scalesRaw) continue;
+      const embInt8 = new Int8Array(entry.embRaw.buffer, entry.embRaw.byteOffset, entry.embRaw.byteLength);
+      const scalesF32 = new Float32Array(entry.scalesRaw.buffer, entry.scalesRaw.byteOffset, entry.scalesRaw.byteLength);
+      const npx = scalesF32.length;
+      for (let i = 0; i < npx; i++) {
+        if (isNaN(scalesF32[i]) || scalesF32[i] === 0) continue;
+        const base = i * nBands;
+        const vr = embInt8[base + bR], vg = embInt8[base + bG], vb = embInt8[base + bB];
+        if (vr < gMinR) gMinR = vr; if (vr > gMaxR) gMaxR = vr;
+        if (vg < gMinG) gMinG = vg; if (vg > gMaxG) gMaxG = vg;
+        if (vb < gMinB) gMinB = vb; if (vb > gMaxB) gMaxB = vb;
+      }
+    }
+
+    const rangeR = gMaxR - gMinR || 1, rangeG = gMaxG - gMinG || 1, rangeB = gMaxB - gMinB || 1;
+
+    // Second pass: re-render each chunk with global scale
+    for (const [key, entry] of this.chunkCache) {
+      if (entry.isPreview || !entry.embRaw || !entry.scalesRaw) continue;
+      const embInt8 = new Int8Array(entry.embRaw.buffer, entry.embRaw.byteOffset, entry.embRaw.byteLength);
+      const scalesF32 = new Float32Array(entry.scalesRaw.buffer, entry.scalesRaw.byteOffset, entry.scalesRaw.byteLength);
+      const embTile = this.embeddingCache.get(key);
+      if (!embTile) continue;
+      const { width: w, height: h } = embTile;
+      const rgba = new Uint8Array(w * h * 4);
+      for (let i = 0; i < w * h; i++) {
+        const pi = i * 4;
+        const s = scalesF32[i];
+        if (isNaN(s) || s === 0) { rgba[pi + 3] = 0; continue; }
+        const base = i * nBands;
+        rgba[pi]     = Math.max(0, Math.min(255, ((embInt8[base + bR] - gMinR) / rangeR) * 255));
+        rgba[pi + 1] = Math.max(0, Math.min(255, ((embInt8[base + bG] - gMinG) / rangeG) * 255));
+        rgba[pi + 2] = Math.max(0, Math.min(255, ((embInt8[base + bB] - gMinB) / rangeB) * 255));
+        rgba[pi + 3] = 255;
+      }
+
+      const canvas = this.rgbaToCanvas(rgba.buffer, w, h);
+      entry.canvas = canvas;
+
+      // Update existing map source in-place
+      const sourceId = entry.sourceId;
+      if (sourceId) {
+        const corners = this.chunkCorners(entry.ci, entry.cj);
+        const dataUrl = canvas.toDataURL('image/png');
+        const src = this.map!.getSource(sourceId) as
+          { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => void } | undefined;
+        if (src?.updateImage) {
+          src.updateImage({ url: dataUrl, coordinates: corners });
+        }
+      }
+    }
+  }
+
   /** Load a batch of embedding chunks with parallel concurrency,
    *  calling onProgress after each completes.
    *  Returns the number of chunks successfully loaded. */
@@ -578,39 +641,47 @@ export class ZarrTesseraSource {
    *  Called repeatedly during incremental classification — updates in-place
    *  if the source already exists. */
   addClassificationOverlay(ci: number, cj: number, canvas: HTMLCanvasElement): void {
-    if (!this.map) return;
-    const key = this.chunkKey(ci, cj);
-    const sourceId = `zarr-class-src-${key}`;
-    const layerId = `zarr-class-lyr-${key}`;
-    const corners = this.chunkCorners(ci, cj);
-    const dataUrl = canvas.toDataURL('image/png');
+    this.addClassificationOverlayBatch([{ ci, cj, canvas }]);
+  }
 
-    const existingSource = this.map.getSource(sourceId) as
-      { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => void } | undefined;
+  /** Add or update classification overlays for multiple tiles at once.
+   *  Only raises overlay layers once at the end (O(N) instead of O(N²)). */
+  addClassificationOverlayBatch(tiles: { ci: number; cj: number; canvas: HTMLCanvasElement }[]): void {
+    if (!this.map || tiles.length === 0) return;
+    let needsRaise = false;
 
-    if (existingSource?.updateImage) {
-      // Update existing image source in-place (fast path for incremental updates)
-      try {
-        existingSource.updateImage({ url: dataUrl, coordinates: corners });
-      } catch {
-        // Source may have been removed (AbortError) — ignore
+    for (const { ci, cj, canvas } of tiles) {
+      const key = this.chunkKey(ci, cj);
+      const sourceId = `zarr-class-src-${key}`;
+      const layerId = `zarr-class-lyr-${key}`;
+      const corners = this.chunkCorners(ci, cj);
+      const dataUrl = canvas.toDataURL('image/png');
+
+      const existingSource = this.map.getSource(sourceId) as
+        { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => void } | undefined;
+
+      if (existingSource?.updateImage) {
+        try {
+          existingSource.updateImage({ url: dataUrl, coordinates: corners });
+        } catch {
+          // Source may have been removed — ignore
+        }
+      } else {
+        if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
+        if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+
+        this.map.addSource(sourceId, {
+          type: 'image', url: dataUrl, coordinates: corners,
+        });
+        this.map.addLayer({
+          id: layerId, type: 'raster', source: sourceId,
+          paint: { 'raster-opacity': 0.7, 'raster-fade-duration': 0 },
+        });
+        needsRaise = true;
       }
-    } else {
-      // First time — create source and layer
-      if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
-      if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
-
-      this.map.addSource(sourceId, {
-        type: 'image', url: dataUrl, coordinates: corners,
-      });
-      this.map.addLayer({
-        id: layerId, type: 'raster', source: sourceId,
-        paint: { 'raster-opacity': 0.7, 'raster-fade-duration': 0 },
-      });
-
-      this.raiseOverlayLayers();
-      this.debug('overlay', `Classification overlay added for chunk (${ci},${cj})`);
     }
+
+    if (needsRaise) this.raiseOverlayLayers();
   }
 
   /** Store a per-pixel class ID map for a classified chunk. */

@@ -81,10 +81,9 @@
     const threshold = $simThreshold;
     if (!src || scores.length === 0) return;
 
-    renderSimilarityOverlays(scores, threshold, (r) => {
-      src.addClassificationOverlay(r.ci, r.cj, r.canvas);
-      src.setClassificationOpacity(0.8);
-    });
+    const overlays = renderSimilarityOverlays(scores, threshold);
+    src.addClassificationOverlayBatch(overlays);
+    src.setClassificationOpacity(0.8);
   }
 
   function handleClear() {

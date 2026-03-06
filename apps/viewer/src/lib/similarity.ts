@@ -78,8 +78,6 @@ export async function computeSimilarityScores(
     }
 
     rawTiles.push({ ci, cj, width, height, scores });
-    // Yield to event loop between tiles
-    await new Promise(r => setTimeout(r, 0));
   }
 
   // Second pass: normalise scores to 0..1 in-place, wrap as TileSimilarity

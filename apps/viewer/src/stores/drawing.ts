@@ -58,6 +58,9 @@ export async function addRegion(feature: GeoJSON.Feature): Promise<void> {
     roiLoading.set({ loaded, total: t });
   });
 
+  // Re-render all tiles with a global colour scale so they match
+  src.recolorAllChunks();
+
   // Record which chunks this region owns
   const loadedKeys = chunks.map(c => `${c.ci}_${c.cj}`).filter(k => src.embeddingCache.has(k));
   roiRegions.update(rs =>
