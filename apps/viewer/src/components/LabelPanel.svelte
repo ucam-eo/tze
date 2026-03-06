@@ -216,7 +216,7 @@
   </div>
 
   <div class="text-[9px] text-gray-700 leading-relaxed">
-    Double-click tile to load embeddings, then click to label.
+    Draw a region to load embeddings, then click to label.
     Needs 2+ points in 2+ classes to classify.
   </div>
 </div>

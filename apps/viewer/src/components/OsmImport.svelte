@@ -200,7 +200,7 @@
         {#if phase === 'idle'}
           {#if !canQuery}
             <div class="text-[11px] text-gray-500 text-center py-6">
-              Double-click tiles to load embeddings first
+              Draw a region to load embeddings first
             </div>
           {:else}
             <div class="flex items-center justify-center py-6">

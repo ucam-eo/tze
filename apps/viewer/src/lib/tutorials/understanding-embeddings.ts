@@ -191,7 +191,7 @@ export const understandingEmbeddings: TutorialDef = {
       title: 'Tile Grid',
       description:
         'The map is now showing a grid of tiles. Each tile is a chunk of the Zarr dataset.\n' +
-        'Hover over tiles to see their outlines. Double-click (or long-press on mobile) loads the pixel embeddings for that tile.\n' +
+        'Hover over tiles to see their outlines. Draw a region to load the pixel embeddings for those tiles.\n' +
         'Next we\'ll download one tile\'s embeddings \u2014 while that loads, a diagram will explain how they\'re produced.',
       highlight: '#map',
       arrow: 'none',

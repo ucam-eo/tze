@@ -28,7 +28,7 @@ export const cambridgeSetupSteps: TutorialStep[] = [
     title: 'Tile Grid',
     description:
       'The map is now showing a grid of tiles. Each tile is a chunk of the Zarr dataset.\n' +
-      'Hover over tiles to see their outlines. Double-click loads the pixel embeddings for that tile.\n' +
+      'Hover over tiles to see their outlines. Draw a region to load the pixel embeddings for those tiles.\n' +
       'Embeddings are dense feature vectors extracted by a neural network from each pixel.',
     highlight: '#map',
     arrow: 'none',
