@@ -7,8 +7,8 @@ import type {
 import { UtmProjection } from './projection.js';
 import { openStore, fetchRegion, type ZarrStore } from './zarr-reader.js';
 import { WorkerPool } from './worker-pool.js';
-import { ZarrLayer } from '@carbonplan/zarr-layer';
 import { RegionLoadingAnimation } from './region-loading-animation.js';
+import { clearZarrProtocolCache } from './zarr-tile-protocol.js';
 
 type EventCallback<T> = (data: T) => void;
 
@@ -24,7 +24,8 @@ export class ZarrTesseraSource {
   private workerPool: WorkerPool | null = null;
   private chunkCache = new Map<string, CachedChunk>();
   private currentAbort: AbortController | null = null;
-  private previewLayer: any | null = null;
+  private previewLayerId: string | null = null;
+  private previewSourceId: string | null = null;
 
   /** Contiguous embedding buffer for all loaded tiles. */
   public embeddingRegion: EmbeddingRegion | null = null;
@@ -108,14 +109,14 @@ export class ZarrTesseraSource {
 
 
   remove(): void {
-    // Remove zarr-layer preview
-    if (this.previewLayer && this.map) {
-        try {
-            this.map.removeLayer(this.previewLayer.id);
-        } catch (e) {
-            // Layer may already be removed
-        }
-        this.previewLayer = null;
+    // Remove preview tile layer
+    if (this.map) {
+      try {
+        if (this.previewLayerId && this.map.getLayer(this.previewLayerId)) this.map.removeLayer(this.previewLayerId);
+        if (this.previewSourceId && this.map.getSource(this.previewSourceId)) this.map.removeSource(this.previewSourceId);
+      } catch { /* already removed */ }
+      this.previewLayerId = null;
+      this.previewSourceId = null;
     }
 
     if (this.moveHandler && this.map) {
@@ -153,8 +154,8 @@ export class ZarrTesseraSource {
     this.opts.opacity = opacity;
     if (!this.map) return;
     // Update the global preview layer (RGB/PCA background)
-    if (this.previewLayer) {
-        this.previewLayer.setOpacity(opacity);
+    if (this.previewLayerId && this.map.getLayer(this.previewLayerId)) {
+      this.map.setPaintProperty(this.previewLayerId, 'raster-opacity', opacity);
     }
     // Update region-wide RGB overlay
     if (this.map.getLayer('zarr-rgb-overlay-lyr')) {
@@ -172,15 +173,16 @@ export class ZarrTesseraSource {
 
   setPreview(mode: PreviewMode): void {
     this.opts.preview = mode;
-    if (this.previewLayer && this.opts.globalPreviewUrl) {
-        // Global preview layer handles mode switch directly
-        const newVar = mode === 'pca' ? 'pca_rgb' : 'rgb';
-        this.previewLayer.setVariable(newVar);
+    if (this.previewLayerId && this.opts.globalPreviewUrl && this.map) {
+      // Remove and re-add with new variable — protocol URL encodes the variable
+      clearZarrProtocolCache();
+      this.removePreviewLayer();
+      this.addPreviewLayer();
     } else {
-        // Legacy path: clear cache and reload with new preview mode
-        for (const [key] of this.chunkCache) this.removeChunkFromMap(key);
-        this.chunkCache.clear();
-        this.updateVisibleChunks();
+      // Legacy path: clear cache and reload with new preview mode
+      for (const [key] of this.chunkCache) this.removeChunkFromMap(key);
+      this.chunkCache.clear();
+      this.updateVisibleChunks();
     }
   }
 
@@ -211,7 +213,8 @@ export class ZarrTesseraSource {
 
     // Re-add the global preview layer if configured
     if (this.opts.globalPreviewUrl) {
-      this.previewLayer = null; // stale after basemap switch
+      this.previewLayerId = null; // stale after basemap switch
+      this.previewSourceId = null;
       this.addPreviewLayer();
     }
 
@@ -224,7 +227,7 @@ export class ZarrTesseraSource {
     let reAdded = 0;
     for (const [, entry] of this.chunkCache) {
       if (!entry.canvas) continue;
-      if (this.previewLayer && entry.isPreview) continue;
+      if (this.previewLayerId && entry.isPreview) continue;
       entry.sourceId = null;
       entry.layerId = null;
       const ids = this.addChunkToMap(entry.ci, entry.cj, entry.canvas);
@@ -1488,7 +1491,7 @@ export class ZarrTesseraSource {
     const loadLayers: string[] = [];
     const classLayers: string[] = [];
     for (const layer of style.layers) {
-      if (layer.id.startsWith('zarr-preview-')) previewLayers.push(layer.id);
+      if (layer.id === 'zarr-global-preview-lyr') previewLayers.push(layer.id);
       else if (layer.id.startsWith('zarr-chunk-lyr-')) chunkLayers.push(layer.id);
       else if (layer.id.startsWith('zarr-load-lyr-')) loadLayers.push(layer.id);
       else if (layer.id.startsWith('zarr-class-lyr-')) classLayers.push(layer.id);
@@ -1541,7 +1544,7 @@ export class ZarrTesseraSource {
     // When the global preview layer handles RGB/PCA rendering, the legacy
     // per-chunk loading is unnecessary.  Embedding tiles are loaded separately
     // via loadFullChunk (double-click) and always use zarr-chunk-lyr layers.
-    if (this.previewLayer) return;
+    if (this.previewLayerId) return;
     this.currentAbort?.abort();
     const abort = this.currentAbort = new AbortController();
     const signal = abort.signal;
@@ -1776,61 +1779,58 @@ export class ZarrTesseraSource {
     if (this.map?.getSource('chunk-grid')) this.map.removeSource('chunk-grid');
   }
 
+  private removePreviewLayer(): void {
+    if (!this.map) return;
+    try {
+      if (this.previewLayerId && this.map.getLayer(this.previewLayerId)) this.map.removeLayer(this.previewLayerId);
+      if (this.previewSourceId && this.map.getSource(this.previewSourceId)) this.map.removeSource(this.previewSourceId);
+    } catch { /* already removed */ }
+    this.previewLayerId = null;
+    this.previewSourceId = null;
+  }
+
   private addPreviewLayer(): void {
     if (!this.map || !this.opts.globalPreviewUrl) return;
 
-    const previewVar = this.opts.preview === 'pca' ? 'pca_rgb' : 'rgb';
+    this.removePreviewLayer();
 
-    const layerOpts: Record<string, unknown> = {
-        id: `zarr-preview-${Date.now()}`,
-        source: this.opts.globalPreviewUrl,
-        variable: previewVar,
-        selector: { band: [0, 1, 2, 3] },
-        clim: [0, 255],
-        colormap: ['#000000', '#ffffff'],
-        customFrag: `
-            float r = band_0 / 255.0;
-            float g = band_1 / 255.0;
-            float b = band_2 / 255.0;
-            float a = band_3 / 255.0;
-            fragColor = vec4(r, g, b, a * opacity);
-            fragColor.rgb *= fragColor.a;
-        `,
-        opacity: this.opts.opacity,
-        zarrVersion: 3,
-        spatialDimensions: { lat: 'lat', lon: 'lon' },
-        latIsAscending: false,
-    };
-
-    // Provide explicit bounds so zarr-layer doesn't try to load coordinate arrays
-    if (this.opts.globalPreviewBounds) {
-        layerOpts.bounds = this.opts.globalPreviewBounds;
-    }
-
-    layerOpts.onLoadingStateChange = (state: { isLoading: boolean; error?: string }) => {
-        if (state.error) {
-            this.debug('error', `zarr-layer: ${state.error}`);
-        }
-    };
+    const variable = this.opts.preview === 'pca' ? 'pca_rgb' : 'rgb';
+    const sourceId = 'zarr-global-preview-src';
+    const layerId = 'zarr-global-preview-lyr';
 
     try {
-        this.previewLayer = new ZarrLayer(layerOpts as any);
-        this.map.addLayer(this.previewLayer as any);
-        this.debug('info', `Preview layer added via zarr-layer (${previewVar})`);
+      this.map.addSource(sourceId, {
+        type: 'raster',
+        tiles: [`zarr://${this.opts.globalPreviewUrl}/${variable}/{z}/{x}/{y}`],
+        tileSize: 256,
+        minzoom: 0,
+        maxzoom: 14,
+      });
 
-        // Remove legacy preview chunk layers — the global preview layer
-        // now handles RGB/PCA rendering.  Keep embedding chunks (isPreview=false).
-        for (const [key, entry] of this.chunkCache) {
-            if (entry.isPreview) {
-                this.removeChunkFromMap(key);
-            }
-        }
+      this.map.addLayer({
+        id: layerId,
+        type: 'raster',
+        source: sourceId,
+        paint: {
+          'raster-opacity': this.opts.opacity,
+          'raster-fade-duration': 200,
+        },
+      });
 
-        // Ensure vector overlay and other layers stay above the preview
-        this.raiseOverlayLayers();
+      this.previewSourceId = sourceId;
+      this.previewLayerId = layerId;
+      this.debug('info', `Global preview added via zarr:// protocol (${variable})`);
+
+      // Remove legacy preview chunk layers
+      for (const [key, entry] of this.chunkCache) {
+        if (entry.isPreview) this.removeChunkFromMap(key);
+      }
+
+      this.raiseOverlayLayers();
     } catch (err) {
-        this.debug('error', `Failed to add preview layer: ${(err as Error).message}`);
-        this.previewLayer = null;
+      this.debug('error', `Failed to add preview layer: ${(err as Error).message}`);
+      this.previewLayerId = null;
+      this.previewSourceId = null;
     }
   }
 }
