@@ -442,6 +442,8 @@ export class ZarrTesseraSource {
 
   /** Re-render all embedding chunk tiles using a single global min/max
    *  across all loaded tiles, so they share a consistent colour scale. */
+  /** Re-render all embedding chunk tiles using a single global min/max
+   *  across all loaded tiles, so they share a consistent colour scale. */
   recolorAllChunks(): void {
     if (!this.map || !this.store) return;
     const [bR, bG, bB] = this.opts.bands;
@@ -464,9 +466,11 @@ export class ZarrTesseraSource {
       }
     }
 
+    if (gMaxR <= gMinR && gMaxG <= gMinG && gMaxB <= gMinB) return; // no valid data
     const rangeR = gMaxR - gMinR || 1, rangeG = gMaxG - gMinG || 1, rangeB = gMaxB - gMinB || 1;
+    this.debug('render', `recolorAllChunks: R[${gMinR},${gMaxR}] G[${gMinG},${gMaxG}] B[${gMinB},${gMaxB}]`);
 
-    // Second pass: re-render each chunk with global scale
+    // Second pass: re-render each chunk with global scale, remove+re-add to map
     for (const [key, entry] of this.chunkCache) {
       if (entry.isPreview || !entry.embRaw || !entry.scalesRaw) continue;
       const embInt8 = new Int8Array(entry.embRaw.buffer, entry.embRaw.byteOffset, entry.embRaw.byteLength);
@@ -475,6 +479,7 @@ export class ZarrTesseraSource {
       if (!embTile) continue;
       const { width: w, height: h } = embTile;
       const rgba = new Uint8Array(w * h * 4);
+      let nValid = 0;
       for (let i = 0; i < w * h; i++) {
         const pi = i * 4;
         const s = scalesF32[i];
@@ -484,21 +489,23 @@ export class ZarrTesseraSource {
         rgba[pi + 1] = Math.max(0, Math.min(255, ((embInt8[base + bG] - gMinG) / rangeG) * 255));
         rgba[pi + 2] = Math.max(0, Math.min(255, ((embInt8[base + bB] - gMinB) / rangeB) * 255));
         rgba[pi + 3] = 255;
+        nValid++;
       }
+
+      // Remove old tile from map
+      if (entry.sourceId) this.removeChunkFromMap(key);
 
       const canvas = this.rgbaToCanvas(rgba.buffer, w, h);
       entry.canvas = canvas;
 
-      // Update existing map source in-place
-      const sourceId = entry.sourceId;
-      if (sourceId) {
-        const corners = this.chunkCorners(entry.ci, entry.cj);
-        const dataUrl = canvas.toDataURL('image/png');
-        const src = this.map!.getSource(sourceId) as
-          { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => void } | undefined;
-        if (src?.updateImage) {
-          src.updateImage({ url: dataUrl, coordinates: corners });
-        }
+      // Re-add with fresh source
+      if (nValid > 0) {
+        const { sourceId, layerId } = this.addChunkToMap(entry.ci, entry.cj, canvas);
+        entry.sourceId = sourceId;
+        entry.layerId = layerId;
+      } else {
+        entry.sourceId = null;
+        entry.layerId = null;
       }
     }
   }
