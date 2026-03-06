@@ -189,13 +189,15 @@ export class ZarrTesseraSource {
       this.addPreviewLayer();
     }
 
-    // Re-add embedding chunk layers (skip legacy preview-only chunks
-    // when the global preview layer handles RGB)
+    // Re-render the region-wide RGB overlay if embeddings are loaded
+    if (this.embeddingRegion && this.regionTileCount() > 0) {
+      this.recolorAllChunks();
+    }
+
+    // Re-add any remaining per-tile chunk layers (preview tiles etc.)
     let reAdded = 0;
     for (const [, entry] of this.chunkCache) {
       if (!entry.canvas) continue;
-      // When the preview layer is active, only re-add embedding tiles
-      // (those loaded via double-click that have raw embedding data)
       if (this.previewLayer && entry.isPreview) continue;
       entry.sourceId = null;
       entry.layerId = null;
@@ -204,7 +206,7 @@ export class ZarrTesseraSource {
       entry.layerId = ids.layerId;
       reAdded++;
     }
-    this.debug('overlay', `Re-added ${reAdded} cached chunk layers`);
+    if (reAdded > 0) this.debug('overlay', `Re-added ${reAdded} cached chunk layers`);
   }
 
   /** Load full embedding data for a specific chunk.
@@ -392,12 +394,13 @@ export class ZarrTesseraSource {
     return result;
   }
 
-  /** Re-render all embedding tiles using global min/max from the region buffer. */
+  /** Re-render all embedding tiles using global min/max from the region buffer.
+   *  Renders a single region-wide canvas (no seams between tiles). */
   recolorAllChunks(): void {
     if (!this.map || !this.store || !this.embeddingRegion) return;
     const [bR, bG, bB] = this.opts.bands;
     const region = this.embeddingRegion;
-    const { nBands, tileW, tileH, emb, loaded } = region;
+    const { nBands, tileW, tileH, emb, loaded, gridCols, gridRows } = region;
     const tilePixels = tileW * tileH;
 
     // First pass: global min/max across all loaded tiles
@@ -422,40 +425,81 @@ export class ZarrTesseraSource {
     const rangeR = gMaxR - gMinR || 1, rangeG = gMaxG - gMinG || 1, rangeB = gMaxB - gMinB || 1;
     this.debug('render', `recolorAllChunks: R[${gMinR.toFixed(2)},${gMaxR.toFixed(2)}] G[${gMinG.toFixed(2)},${gMaxG.toFixed(2)}] B[${gMinB.toFixed(2)},${gMaxB.toFixed(2)}]`);
 
-    // Second pass: render per-tile canvases with global scale
+    // Remove old per-tile chunk layers (they'll be replaced by the single region canvas)
     for (let t = 0; t < nTiles; t++) {
       if (!loaded[t]) continue;
-      const ci = region.ciMin + Math.floor(t / region.gridCols);
-      const cj = region.cjMin + (t % region.gridCols);
+      const ci = region.ciMin + Math.floor(t / gridCols);
+      const cj = region.cjMin + (t % gridCols);
       const key = this.chunkKey(ci, cj);
       const entry = this.chunkCache.get(key);
-      if (!entry) continue;
+      if (entry?.sourceId) this.removeChunkFromMap(key);
+    }
 
+    // Second pass: render all tiles into a single region-wide canvas
+    const W = gridCols * tileW;
+    const H = gridRows * tileH;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d')!;
+    const imgData = ctx.createImageData(W, H);
+    const rgba = imgData.data;
+
+    for (let t = 0; t < nTiles; t++) {
+      if (!loaded[t]) continue;
+      const tileRow = Math.floor(t / gridCols);
+      const tileCol = t % gridCols;
       const base = t * tilePixels * nBands;
-      const rgba = new Uint8Array(tileW * tileH * 4);
-      let nValid = 0;
-      for (let i = 0; i < tilePixels; i++) {
-        const off = base + i * nBands;
-        const pi = i * 4;
-        if (isNaN(emb[off])) { rgba[pi + 3] = 0; continue; }
-        rgba[pi]     = Math.max(0, Math.min(255, ((emb[off + bR] - gMinR) / rangeR) * 255));
-        rgba[pi + 1] = Math.max(0, Math.min(255, ((emb[off + bG] - gMinG) / rangeG) * 255));
-        rgba[pi + 2] = Math.max(0, Math.min(255, ((emb[off + bB] - gMinB) / rangeB) * 255));
-        rgba[pi + 3] = 255;
-        nValid++;
-      }
+      const pixelY0 = tileRow * tileH;
+      const pixelX0 = tileCol * tileW;
 
-      if (entry.sourceId) this.removeChunkFromMap(key);
-      const canvas = this.rgbaToCanvas(rgba.buffer, tileW, tileH);
-      entry.canvas = canvas;
-      if (nValid > 0) {
-        const { sourceId, layerId } = this.addChunkToMap(ci, cj, canvas);
-        entry.sourceId = sourceId;
-        entry.layerId = layerId;
-      } else {
-        entry.sourceId = null;
-        entry.layerId = null;
+      for (let py = 0; py < tileH; py++) {
+        for (let px = 0; px < tileW; px++) {
+          const i = py * tileW + px;
+          const off = base + i * nBands;
+          if (isNaN(emb[off])) continue;
+          const outIdx = ((pixelY0 + py) * W + (pixelX0 + px)) * 4;
+          rgba[outIdx]     = Math.max(0, Math.min(255, ((emb[off + bR] - gMinR) / rangeR) * 255));
+          rgba[outIdx + 1] = Math.max(0, Math.min(255, ((emb[off + bG] - gMinG) / rangeG) * 255));
+          rgba[outIdx + 2] = Math.max(0, Math.min(255, ((emb[off + bB] - gMinB) / rangeB) * 255));
+          rgba[outIdx + 3] = 255;
+        }
       }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+
+    // Place the single canvas as a region-wide ImageSource
+    const topLeft = this.chunkUtmBounds(region.ciMin, region.cjMin);
+    const bottomRight = this.chunkUtmBounds(region.ciMax, region.cjMax);
+    const regionBounds: UtmBounds = {
+      minE: topLeft.minE,
+      maxE: bottomRight.maxE,
+      minN: bottomRight.minN,
+      maxN: topLeft.maxN,
+    };
+    const corners = this.proj!.chunkCornersToLngLat(regionBounds);
+    const dataUrl = canvas.toDataURL('image/png');
+
+    const sourceId = 'zarr-rgb-overlay-src';
+    const layerId = 'zarr-rgb-overlay-lyr';
+
+    // Update in-place if source exists, otherwise create
+    const existing = this.map.getSource(sourceId) as
+      { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => void } | undefined;
+    if (existing?.updateImage) {
+      existing.updateImage({ url: dataUrl, coordinates: corners });
+    } else {
+      if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
+      if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+      this.map.addSource(sourceId, {
+        type: 'image', url: dataUrl, coordinates: corners,
+      });
+      this.map.addLayer({
+        id: layerId, type: 'raster', source: sourceId,
+        paint: { 'raster-opacity': this.opts.opacity, 'raster-fade-duration': 0 },
+      });
+      this.raiseOverlayLayers();
     }
   }
 
@@ -684,7 +728,8 @@ export class ZarrTesseraSource {
   }
 
   /** Add or update a single overlay canvas covering the entire embedding region.
-   *  One PNG encode + one ImageSource — much faster than per-tile overlays. */
+   *  One PNG encode + one ImageSource — much faster than per-tile overlays.
+   *  Uses updateImage when possible to avoid remove+re-add flicker. */
   setSimilarityOverlay(canvas: HTMLCanvasElement): void {
     if (!this.map || !this.embeddingRegion) return;
     const r = this.embeddingRegion;
@@ -702,6 +747,16 @@ export class ZarrTesseraSource {
 
     const sourceId = 'zarr-sim-overlay-src';
     const layerId = 'zarr-sim-overlay-lyr';
+
+    // Fast path: update existing source in-place (no flicker, no layer re-order)
+    const existing = this.map.getSource(sourceId) as
+      { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => void } | undefined;
+    if (existing?.updateImage) {
+      existing.updateImage({ url: dataUrl, coordinates: corners });
+      return;
+    }
+
+    // First time: create source + layer
     if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
     if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
 
@@ -720,6 +775,15 @@ export class ZarrTesseraSource {
     if (!this.map) return;
     const layerId = 'zarr-sim-overlay-lyr';
     const sourceId = 'zarr-sim-overlay-src';
+    if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
+    if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+  }
+
+  /** Remove the region-wide RGB overlay. */
+  clearRgbOverlay(): void {
+    if (!this.map) return;
+    const layerId = 'zarr-rgb-overlay-lyr';
+    const sourceId = 'zarr-rgb-overlay-src';
     if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
     if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
   }
@@ -800,7 +864,8 @@ export class ZarrTesseraSource {
     if (!this.map) return;
     const style = this.map.getStyle();
     if (!style?.layers) return;
-    // Remove similarity overlay
+    // Remove region-wide overlays
+    this.clearRgbOverlay();
     this.clearSimilarityOverlay();
     // Remove per-tile classification overlays
     const classLayers = style.layers.filter(l => l.id.startsWith('zarr-class-lyr-'));
@@ -1315,6 +1380,8 @@ export class ZarrTesseraSource {
       if (layer.id.startsWith('zarr-load-lyr-')) loadLayers.push(layer.id);
       else if (layer.id.startsWith('zarr-class-lyr-')) classLayers.push(layer.id);
     }
+    // RGB region canvas (below everything else)
+    if (this.map!.getLayer('zarr-rgb-overlay-lyr')) this.map!.moveLayer('zarr-rgb-overlay-lyr');
     for (const id of loadLayers) this.map!.moveLayer(id);
     // Similarity overlay (single region-wide layer)
     if (this.map!.getLayer('zarr-sim-overlay-lyr')) this.map!.moveLayer('zarr-sim-overlay-lyr');
