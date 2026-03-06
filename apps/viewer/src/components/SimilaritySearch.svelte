@@ -99,7 +99,7 @@
     <div class="text-[10px] text-gray-600 italic">Click a pixel to select reference</div>
   {:else}
     <div class="text-[9px] text-gray-700 leading-relaxed">
-      Double-click a tile to load embeddings, then click any pixel to find similar ones.
+      Draw a region above to load embeddings, then click any pixel to find similar ones.
     </div>
   {/if}
 

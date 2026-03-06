@@ -120,7 +120,7 @@
 
   {#if embeddingTileCount === 0}
     <div class="text-[9px] text-gray-700 leading-relaxed">
-      Double-click tiles to load embeddings, then run detection with a trained UNet model.
+      Draw a region above to load embeddings, then run detection with a trained UNet model.
     </div>
   {:else}
     <div class="text-[10px] text-gray-500">

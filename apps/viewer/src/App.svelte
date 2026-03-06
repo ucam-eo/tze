@@ -157,6 +157,24 @@
         paint: { 'line-color': '#f97316', 'line-width': 1.5, 'line-opacity': 0.8 },
       });
 
+      // ROI region outlines
+      map.addSource('roi-regions', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer({
+        id: 'roi-regions-fill',
+        type: 'fill',
+        source: 'roi-regions',
+        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.08 },
+      });
+      map.addLayer({
+        id: 'roi-regions-line',
+        type: 'line',
+        source: 'roi-regions',
+        paint: { 'line-color': '#00e5ff', 'line-width': 1.5, 'line-opacity': 0.6, 'line-dasharray': [4, 2] },
+      });
+
       // Terra-draw for polygon/rectangle drawing
       const draw = new TerraDraw({
         adapter: new TerraDrawMapLibreGLAdapter({ map, lib: maplibregl }),
@@ -462,6 +480,20 @@
     const vis = visible ? 'visible' : 'none';
     if (map.getLayer('segment-polygons-fill')) map.setLayoutProperty('segment-polygons-fill', 'visibility', vis);
     if (map.getLayer('segment-polygons-line')) map.setLayoutProperty('segment-polygons-line', 'visibility', vis);
+  });
+
+  // Sync ROI regions to map overlay
+  $effect(() => {
+    const map = $mapInstance;
+    const regions = $roiRegions;
+    if (!map) return;
+    const src = map.getSource('roi-regions') as maplibregl.GeoJSONSource | undefined;
+    if (src) {
+      src.setData({
+        type: 'FeatureCollection',
+        features: regions.map(r => r.feature),
+      });
+    }
   });
 </script>
 
