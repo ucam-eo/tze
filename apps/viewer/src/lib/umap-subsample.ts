@@ -48,7 +48,7 @@ export function subsampleEmbeddings(
 
     for (let i = 0; i < tilePixels; i++) {
       const score = simScores[scoreBase + i];
-      if (Number.isNaN(score)) continue;
+      if (!(score >= 0 && score <= 1)) continue;
 
       const row = Math.floor(i / region.tileW);
       const col = i % region.tileW;
