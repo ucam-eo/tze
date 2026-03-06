@@ -32,13 +32,19 @@ export function subsampleEmbeddings(
   let refPoint: PointRef | null = null;
   const nBands = region.nBands;
   const tilePixels = region.tileW * region.tileH;
-  const { scores: simScores, loaded } = simResult;
+  const { scores: simScores, loaded: simLoaded, gridCols: simCols, ciMin: simCiMin, cjMin: simCjMin } = simResult;
 
-  for (let t = 0; t < region.loaded.length; t++) {
-    if (!region.loaded[t] || !loaded[t]) continue;
-    const ci = region.ciMin + Math.floor(t / region.gridCols);
-    const cj = region.cjMin + (t % region.gridCols);
-    const scoreBase = t * tilePixels;
+  // Iterate over simResult's grid (may differ from current region if region grew)
+  for (let st = 0; st < simLoaded.length; st++) {
+    if (!simLoaded[st]) continue;
+    // Map simResult tile index to absolute chunk coords
+    const ci = simCiMin + Math.floor(st / simCols);
+    const cj = simCjMin + (st % simCols);
+    // Map to current region tile index
+    const rt = (ci - region.ciMin) * region.gridCols + (cj - region.cjMin);
+    if (rt < 0 || rt >= region.loaded.length || !region.loaded[rt]) continue;
+
+    const scoreBase = st * tilePixels;
 
     for (let i = 0; i < tilePixels; i++) {
       const score = simScores[scoreBase + i];
@@ -49,12 +55,12 @@ export function subsampleEmbeddings(
 
       if (ci === refPixel.ci && cj === refPixel.cj &&
           row === refPixel.row && col === refPixel.col) {
-        refPoint = { tileIdx: t, pixelIdx: i, score };
+        refPoint = { tileIdx: rt, pixelIdx: i, score };
         continue;
       }
 
       const bin = Math.min(Math.floor(score * NUM_BINS), NUM_BINS - 1);
-      bins[bin].push({ tileIdx: t, pixelIdx: i, score });
+      bins[bin].push({ tileIdx: rt, pixelIdx: i, score });
     }
   }
 

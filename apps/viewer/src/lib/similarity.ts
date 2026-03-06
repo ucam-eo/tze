@@ -9,6 +9,9 @@ export interface SimilarityResult {
   gridCols: number;
   tileW: number;
   tileH: number;
+  /** Origin chunk indices (snapshot from region at compute time). */
+  ciMin: number;
+  cjMin: number;
   /** Per-tile loaded bitmap (copy from region at compute time). */
   loaded: Uint8Array;
 }
@@ -79,6 +82,7 @@ export function computeSimilarityScores(
     scores,
     gridRows, gridCols,
     tileW, tileH,
+    ciMin: region.ciMin, cjMin: region.cjMin,
     loaded: new Uint8Array(loaded),
   };
 }
