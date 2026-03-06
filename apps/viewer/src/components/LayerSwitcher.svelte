@@ -54,6 +54,13 @@
   }
 
   function addVectorOverlay(map: maplibregl.Map) {
+    // Ensure glyphs URL is set (required for text labels)
+    const style = map.getStyle();
+    if (!style.glyphs) {
+      style.glyphs = 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf';
+      map.setStyle(style, { diff: true });
+    }
+
     if (!map.getSource(VECTOR_SOURCE_ID)) {
       map.addSource(VECTOR_SOURCE_ID, {
         type: 'vector',
