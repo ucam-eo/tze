@@ -683,6 +683,47 @@ export class ZarrTesseraSource {
     return [south, west, north, east];
   }
 
+  /** Add or update a single overlay canvas covering the entire embedding region.
+   *  One PNG encode + one ImageSource — much faster than per-tile overlays. */
+  setSimilarityOverlay(canvas: HTMLCanvasElement): void {
+    if (!this.map || !this.embeddingRegion) return;
+    const r = this.embeddingRegion;
+    // Compute corners spanning the full region grid
+    const topLeft = this.chunkUtmBounds(r.ciMin, r.cjMin);
+    const bottomRight = this.chunkUtmBounds(r.ciMax, r.cjMax);
+    const regionBounds: UtmBounds = {
+      minE: topLeft.minE,
+      maxE: bottomRight.maxE,
+      minN: bottomRight.minN,
+      maxN: topLeft.maxN,
+    };
+    const corners = this.proj!.chunkCornersToLngLat(regionBounds);
+    const dataUrl = canvas.toDataURL('image/png');
+
+    const sourceId = 'zarr-sim-overlay-src';
+    const layerId = 'zarr-sim-overlay-lyr';
+    if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
+    if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+
+    this.map.addSource(sourceId, {
+      type: 'image', url: dataUrl, coordinates: corners,
+    });
+    this.map.addLayer({
+      id: layerId, type: 'raster', source: sourceId,
+      paint: { 'raster-opacity': 0.8, 'raster-fade-duration': 0 },
+    });
+    this.raiseOverlayLayers();
+  }
+
+  /** Remove the similarity overlay. */
+  clearSimilarityOverlay(): void {
+    if (!this.map) return;
+    const layerId = 'zarr-sim-overlay-lyr';
+    const sourceId = 'zarr-sim-overlay-src';
+    if (this.map.getLayer(layerId)) this.map.removeLayer(layerId);
+    if (this.map.getSource(sourceId)) this.map.removeSource(sourceId);
+  }
+
   /** Add or update a classification RGBA canvas as a map layer for a chunk.
    *  Called repeatedly during incremental classification — updates in-place
    *  if the source already exists. */
@@ -759,6 +800,9 @@ export class ZarrTesseraSource {
     if (!this.map) return;
     const style = this.map.getStyle();
     if (!style?.layers) return;
+    // Remove similarity overlay
+    this.clearSimilarityOverlay();
+    // Remove per-tile classification overlays
     const classLayers = style.layers.filter(l => l.id.startsWith('zarr-class-lyr-'));
     for (const layer of classLayers) {
       this.map.removeLayer(layer.id);
@@ -1272,6 +1316,8 @@ export class ZarrTesseraSource {
       else if (layer.id.startsWith('zarr-class-lyr-')) classLayers.push(layer.id);
     }
     for (const id of loadLayers) this.map!.moveLayer(id);
+    // Similarity overlay (single region-wide layer)
+    if (this.map!.getLayer('zarr-sim-overlay-lyr')) this.map!.moveLayer('zarr-sim-overlay-lyr');
     for (const id of classLayers) this.map!.moveLayer(id);
     // ROI polygon outlines should be above classification overlays
     if (this.map!.getLayer('roi-regions-fill')) this.map!.moveLayer('roi-regions-fill');

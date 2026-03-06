@@ -1,5 +1,5 @@
 import type { EmbeddingRegion } from '@ucam-eo/maplibre-zarr-tessera';
-import type { TileSimilarity } from './similarity';
+import type { SimilarityResult } from './similarity';
 
 export interface SubsampleResult {
   embeddings: Float32Array; // N * nBands flat
@@ -18,15 +18,10 @@ const NUM_BINS = 10;
  */
 export function subsampleEmbeddings(
   region: EmbeddingRegion,
-  cachedScores: TileSimilarity[],
+  simResult: SimilarityResult,
   refEmbedding: Float32Array,
   refPixel: { ci: number; cj: number; row: number; col: number },
 ): SubsampleResult {
-  const scoreMap = new Map<string, TileSimilarity>();
-  for (const ts of cachedScores) {
-    scoreMap.set(`${ts.ci}_${ts.cj}`, ts);
-  }
-
   interface PointRef {
     tileIdx: number;
     pixelIdx: number;
@@ -37,17 +32,16 @@ export function subsampleEmbeddings(
   let refPoint: PointRef | null = null;
   const nBands = region.nBands;
   const tilePixels = region.tileW * region.tileH;
+  const { scores: simScores, loaded } = simResult;
 
   for (let t = 0; t < region.loaded.length; t++) {
-    if (!region.loaded[t]) continue;
+    if (!region.loaded[t] || !loaded[t]) continue;
     const ci = region.ciMin + Math.floor(t / region.gridCols);
     const cj = region.cjMin + (t % region.gridCols);
-    const key = `${ci}_${cj}`;
-    const ts = scoreMap.get(key);
-    if (!ts) continue;
+    const scoreBase = t * tilePixels;
 
     for (let i = 0; i < tilePixels; i++) {
-      const score = ts.scores[i];
+      const score = simScores[scoreBase + i];
       if (Number.isNaN(score)) continue;
 
       const row = Math.floor(i / region.tileW);
@@ -99,21 +93,21 @@ export function subsampleEmbeddings(
 
   const N = selected.length + (refPoint ? 1 : 0);
   const embeddings = new Float32Array(N * nBands);
-  const scores = new Float32Array(N);
+  const outScores = new Float32Array(N);
   let refIndex = -1;
 
   for (let i = 0; i < selected.length; i++) {
     const p = selected[i];
     const offset = (p.tileIdx * tilePixels + p.pixelIdx) * nBands;
     embeddings.set(region.emb.subarray(offset, offset + nBands), i * nBands);
-    scores[i] = p.score;
+    outScores[i] = p.score;
   }
 
   if (refPoint) {
     refIndex = selected.length;
     const offset = (refPoint.tileIdx * tilePixels + refPoint.pixelIdx) * nBands;
     embeddings.set(region.emb.subarray(offset, offset + nBands), refIndex * nBands);
-    scores[refIndex] = refPoint.score;
+    outScores[refIndex] = refPoint.score;
   } else {
     refIndex = selected.length > 0 ? N - 1 : 0;
     if (selected.length === 0) {
@@ -123,7 +117,7 @@ export function subsampleEmbeddings(
     }
   }
 
-  return { embeddings, scores, refIndex, count: N, nBands };
+  return { embeddings, scores: outScores, refIndex, count: N, nBands };
 }
 
 /**

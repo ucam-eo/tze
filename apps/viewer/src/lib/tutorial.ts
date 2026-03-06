@@ -3,7 +3,7 @@ import type { ZarrTesseraSource } from '@ucam-eo/maplibre-zarr-tessera';
 import type { Writable, Readable } from 'svelte/store';
 import type { ToolId } from '../stores/tools';
 import type { StoreMetadata } from '@ucam-eo/maplibre-zarr-tessera';
-import type { TileSimilarity } from './similarity';
+import type { SimilarityResult } from './similarity';
 import type { ClassDef, LabelPoint } from '../stores/classifier';
 
 export type StepTrigger =
@@ -44,7 +44,7 @@ export interface TutorialContext {
     simThreshold: Writable<number>;
     zarrSource: Writable<ZarrTesseraSource | null>;
     metadata: Readable<StoreMetadata | null>;
-    simScores: Writable<TileSimilarity[]>;
+    simScores: Writable<SimilarityResult | null>;
     simRefEmbedding: Writable<Float32Array | null>;
     simSelectedPixel: Writable<{ ci: number; cj: number; row: number; col: number } | null>;
     simEmbeddingTileCount: Writable<number>;

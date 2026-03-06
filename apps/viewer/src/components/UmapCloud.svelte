@@ -92,13 +92,13 @@
     killWorker();
     status = 'Sampling...';
 
-    const scores = $simScores;
+    const simResult = $simScores;
     const ref = $simRefEmbedding;
     const pixel = $simSelectedPixel;
 
     const region = src.embeddingRegion!;
-    const sample = (scores.length > 0 && ref && pixel)
-      ? subsampleEmbeddings(region, scores, ref, pixel)
+    const sample = (simResult && ref && pixel)
+      ? subsampleEmbeddings(region, simResult, ref, pixel)
       : subsampleUniform(region);
 
     if (sample.count < 4) { status = 'Too few points'; return; }

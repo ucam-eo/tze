@@ -1,34 +1,31 @@
 import type { EmbeddingRegion } from '@ucam-eo/maplibre-zarr-tessera';
 
-/** Per-tile cached similarity data with normalised scores. */
-export interface TileSimilarity {
-  ci: number;
-  cj: number;
-  width: number;
-  height: number;
-  /** Per-pixel normalised similarity in 0..1. NaN = invalid pixel. */
+/** Cached similarity data for the entire region. */
+export interface SimilarityResult {
+  /** Per-pixel normalised similarity in 0..1. NaN = invalid. Same layout as region.emb (tile-major). */
   scores: Float32Array;
-  /** Reusable canvas for flicker-free updates. */
-  canvas: HTMLCanvasElement;
-}
-
-export interface SimilarityOverlay {
-  ci: number;
-  cj: number;
-  canvas: HTMLCanvasElement;
+  /** Region geometry for rendering. */
+  gridRows: number;
+  gridCols: number;
+  tileW: number;
+  tileH: number;
+  /** Per-tile loaded bitmap (copy from region at compute time). */
+  loaded: Uint8Array;
 }
 
 /**
  * Compute cosine similarity of every pixel in the region to a reference
  * embedding. Scores are normalised to 0..1 based on observed min/max.
+ * Returns a single flat array covering the whole region grid.
  */
-export async function computeSimilarityScores(
+export function computeSimilarityScores(
   region: EmbeddingRegion,
   refEmbedding: Float32Array,
-): Promise<TileSimilarity[]> {
+): SimilarityResult {
   const D = refEmbedding.length;
-  const { tileW, tileH, nBands, emb, loaded, gridCols } = region;
+  const { tileW, tileH, nBands, emb, loaded, gridCols, gridRows } = region;
   const tilePixels = tileW * tileH;
+  const totalTiles = loaded.length;
 
   // Pre-normalise reference vector
   let refNormSq = 0;
@@ -37,25 +34,20 @@ export async function computeSimilarityScores(
   const ref = new Float32Array(D);
   for (let b = 0; b < D; b++) ref[b] = refEmbedding[b] * refScale;
 
-  // First pass: compute raw cosine similarities per tile
-  interface RawTile {
-    ci: number; cj: number;
-    scores: Float32Array;
-  }
-  const rawTiles: RawTile[] = [];
+  const scores = new Float32Array(totalTiles * tilePixels);
+  scores.fill(NaN);
+
   let globalMin = Infinity;
   let globalMax = -Infinity;
 
-  for (let t = 0; t < loaded.length; t++) {
+  // First pass: compute raw cosine similarities
+  for (let t = 0; t < totalTiles; t++) {
     if (!loaded[t]) continue;
-    const ci = region.ciMin + Math.floor(t / gridCols);
-    const cj = region.cjMin + (t % gridCols);
-    const scores = new Float32Array(tilePixels);
-    scores.fill(NaN);
+    const embBase = t * tilePixels * nBands;
+    const scoreBase = t * tilePixels;
 
-    const base = t * tilePixels * nBands;
     for (let i = 0; i < tilePixels; i++) {
-      const off = base + i * nBands;
+      const off = embBase + i * nBands;
       if (isNaN(emb[off])) continue;
 
       let dot = 0, qSq = 0;
@@ -65,78 +57,78 @@ export async function computeSimilarityScores(
         qSq += v * v;
       }
       const cos = dot / Math.sqrt(qSq + 1e-12);
-      scores[i] = cos;
+      scores[scoreBase + i] = cos;
       if (cos < globalMin) globalMin = cos;
       if (cos > globalMax) globalMax = cos;
     }
-    rawTiles.push({ ci, cj, scores });
   }
 
   // Second pass: normalise to 0..1
   const range = globalMax - globalMin;
-  const results: TileSimilarity[] = [];
-
-  for (const raw of rawTiles) {
-    const { scores } = raw;
-    if (range > 0) {
-      for (let i = 0; i < scores.length; i++) {
-        if (!isNaN(scores[i])) scores[i] = (scores[i] - globalMin) / range;
-      }
-    } else {
-      for (let i = 0; i < scores.length; i++) {
-        if (!isNaN(scores[i])) scores[i] = 0.5;
-      }
+  if (range > 0) {
+    for (let i = 0; i < scores.length; i++) {
+      if (!isNaN(scores[i])) scores[i] = (scores[i] - globalMin) / range;
     }
-
-    const canvas = document.createElement('canvas');
-    canvas.width = tileW;
-    canvas.height = tileH;
-
-    results.push({
-      ci: raw.ci, cj: raw.cj,
-      width: tileW, height: tileH,
-      scores, canvas,
-    });
+  } else {
+    for (let i = 0; i < scores.length; i++) {
+      if (!isNaN(scores[i])) scores[i] = 0.5;
+    }
   }
 
-  return results;
+  return {
+    scores,
+    gridRows, gridCols,
+    tileW, tileH,
+    loaded: new Uint8Array(loaded),
+  };
 }
 
 /**
- * Render cached normalised similarity scores into overlay canvases.
+ * Render similarity scores into a single canvas covering the whole region.
+ * Returns the canvas — caller passes it to a single ImageSource overlay.
  */
-export function renderSimilarityOverlays(
-  tiles: TileSimilarity[],
+export function renderSimilarityCanvas(
+  result: SimilarityResult,
   threshold: number,
-  onTileDone?: (r: SimilarityOverlay) => void,
-): SimilarityOverlay[] {
-  const results: SimilarityOverlay[] = [];
+  canvas?: HTMLCanvasElement,
+): HTMLCanvasElement {
+  const { scores, gridRows, gridCols, tileW, tileH, loaded } = result;
+  const W = gridCols * tileW;
+  const H = gridRows * tileH;
+  const tilePixels = tileW * tileH;
 
-  for (const tile of tiles) {
-    const { ci, cj, width, height, scores, canvas } = tile;
-    const ctx = canvas.getContext('2d')!;
-    const imgData = ctx.createImageData(width, height);
-    const rgba = imgData.data;
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+  }
+  canvas.width = W;
+  canvas.height = H;
 
-    for (let i = 0; i < width * height; i++) {
-      const s = scores[i];
-      if (isNaN(s)) continue;
+  const ctx = canvas.getContext('2d')!;
+  const imgData = ctx.createImageData(W, H);
+  const rgba = imgData.data;
 
-      if (s >= threshold) {
-        const rgbaIdx = i * 4;
-        rgba[rgbaIdx]     = 0;
-        rgba[rgbaIdx + 1] = 229;
-        rgba[rgbaIdx + 2] = 255;
-        rgba[rgbaIdx + 3] = 180;
+  for (let t = 0; t < loaded.length; t++) {
+    if (!loaded[t]) continue;
+    const tileRow = Math.floor(t / gridCols);
+    const tileCol = t % gridCols;
+    const scoreBase = t * tilePixels;
+    const pixelY0 = tileRow * tileH;
+    const pixelX0 = tileCol * tileW;
+
+    for (let py = 0; py < tileH; py++) {
+      for (let px = 0; px < tileW; px++) {
+        const s = scores[scoreBase + py * tileW + px];
+        if (isNaN(s) || s < threshold) continue;
+
+        const outIdx = ((pixelY0 + py) * W + (pixelX0 + px)) * 4;
+        rgba[outIdx]     = 0;
+        rgba[outIdx + 1] = 229;
+        rgba[outIdx + 2] = 255;
+        rgba[outIdx + 3] = 180;
       }
     }
-
-    ctx.putImageData(imgData, 0, 0);
-
-    const result: SimilarityOverlay = { ci, cj, canvas };
-    results.push(result);
-    onTileDone?.(result);
   }
 
-  return results;
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
 }

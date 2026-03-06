@@ -3,10 +3,11 @@
   import { zarrSource } from '../stores/zarr';
   import { simScores, simRefEmbedding, simSelectedPixel, simThreshold, simEmbeddingTileCount } from '../stores/similarity';
   import { roiLoading } from '../stores/drawing';
-  import { computeSimilarityScores, renderSimilarityOverlays, type TileSimilarity } from '../lib/similarity';
+  import { computeSimilarityScores, renderSimilarityCanvas } from '../lib/similarity';
 
   let isComputing = $state(false);
   let pendingRecompute = false;
+  let overlayCanvas: HTMLCanvasElement | undefined;
 
   // Track embedding loads via events
   $effect(() => {
@@ -34,7 +35,7 @@
 
   /** Re-render similarity overlays from existing scores (e.g. when switching back to this tab). */
   export function restoreOverlays() {
-    if (get(simScores).length > 0) applyThreshold();
+    if (get(simScores)) applyThreshold();
   }
 
   /** Called from App.svelte when the user clicks in similarity mode. */
@@ -49,21 +50,21 @@
     runCompute();
   }
 
-  /** GPU compute — runs once per reference pixel selection.
-   *  If called while already computing, queues a re-run. */
-  async function runCompute() {
+  /** CPU compute — runs once per reference pixel selection. */
+  function runCompute() {
     const src = $zarrSource;
     if (!src || !$simRefEmbedding) return;
     if (isComputing) { pendingRecompute = true; return; }
     isComputing = true;
 
     try {
-      src.clearClassificationOverlays();
+      src.clearSimilarityOverlay();
       if (!src.embeddingRegion) return;
-      $simScores = await computeSimilarityScores(
+      $simScores = computeSimilarityScores(
         src.embeddingRegion,
         $simRefEmbedding,
       );
+      overlayCanvas = undefined; // force new canvas for new region geometry
       applyThreshold();
     } finally {
       isComputing = false;
@@ -74,31 +75,31 @@
     }
   }
 
-  /** CPU render — runs instantly when threshold slider moves.
-   *  Updates existing overlay sources in-place (no clear+re-add). */
+  /** Render threshold into a single region-wide canvas and push to map.
+   *  One PNG encode + one ImageSource — no per-tile overhead. */
   function applyThreshold() {
     const src = $zarrSource;
-    const scores = $simScores;
+    const result = $simScores;
     const threshold = $simThreshold;
-    if (!src || scores.length === 0) return;
+    if (!src || !result) return;
 
-    const overlays = renderSimilarityOverlays(scores, threshold);
-    src.addClassificationOverlayBatch(overlays);
-    src.setClassificationOpacity(0.8);
+    overlayCanvas = renderSimilarityCanvas(result, threshold, overlayCanvas);
+    src.setSimilarityOverlay(overlayCanvas);
   }
 
   function handleClear() {
-    $zarrSource?.clearClassificationOverlays();
+    $zarrSource?.clearSimilarityOverlay();
     $simSelectedPixel = null;
     $simRefEmbedding = null;
-    $simScores = [];
+    $simScores = null;
+    overlayCanvas = undefined;
   }
 
   // React to threshold changes from any source (sidebar slider or UMAP window slider)
   $effect(() => {
     const _t = $simThreshold; // track only threshold
     // Use get() to avoid tracking simScores in this effect
-    if (get(simScores).length > 0) applyThreshold();
+    if (get(simScores)) applyThreshold();
   });
 
 </script>
