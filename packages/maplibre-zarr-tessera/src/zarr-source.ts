@@ -1432,8 +1432,8 @@ export class ZarrTesseraSource {
         id: 'chunk-grid-lines', type: 'line', source: 'chunk-grid',
         paint: {
           'line-color': ['case', ['get', 'hasData'], '#00e5ff', '#374151'],
-          'line-width': ['case', ['get', 'hasData'], 1, 0.5],
-          'line-opacity': ['case', ['get', 'hasData'], 0.4, 0.2],
+          'line-width': ['case', ['get', 'hasData'], 0.5, 0.3],
+          'line-opacity': ['case', ['get', 'hasData'], 0.2, 0.1],
         },
         layout: { visibility: gridVis },
       });
