@@ -90,8 +90,9 @@ const TILE_SIZE = 256;
  * Tile URL format: `zarr://STORE_URL/VARIABLE/{z}/{x}/{y}`
  * e.g. `zarr://https://example.com/global_rgb.zarr/rgb/{z}/{x}/{y}`
  */
-export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, handler: Function) => void }): void {
+export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, handler: (params: { url: string }, abortController: AbortController) => Promise<{ data: ArrayBuffer }>) => void }): void {
   maplibregl.addProtocol('zarr', async (params: { url: string }, _abortController: AbortController) => {
+    try {
     // Parse: zarr://STORE_URL/VARIABLE/{z}/{x}/{y}
     const raw = params.url.replace('zarr://', '');
     const parts = raw.split('/');
@@ -123,7 +124,7 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
     const c1 = Math.min(level.shape[1], px1);
 
     if (r1 <= r0 || c1 <= c0) {
-      return { data: new Uint8Array(0) };
+      return { data: new ArrayBuffer(0) };
     }
 
     // Fetch the region from Zarr — dimensions are [lat, lon, band]
@@ -161,9 +162,17 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
     }
 
     ctx.putImageData(imgData, 0, 0);
-    const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/png'));
-    const arrayBuf = await blob.arrayBuffer();
-    return { data: new Uint8Array(arrayBuf) };
+    // Use toDataURL + base64 decode (more compatible than toBlob across browsers)
+    const dataUrl = canvas.toDataURL('image/png');
+    const base64 = dataUrl.split(',')[1];
+    const binaryStr = atob(base64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    return { data: bytes.buffer };
+    } catch (err) {
+      console.error('[zarr-protocol] Tile load failed:', params.url, err);
+      throw err;
+    }
   });
 }
 

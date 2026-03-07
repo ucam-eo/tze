@@ -61,9 +61,14 @@ export class ZarrTesseraSource {
 
   async addTo(map: MaplibreMap): Promise<void> {
     this.map = map;
-    this.workerPool = new WorkerPool(
-      Math.min(navigator.hardwareConcurrency || 4, 8)
-    );
+    try {
+      this.workerPool = new WorkerPool(
+        Math.min(navigator.hardwareConcurrency || 4, 8)
+      );
+    } catch (err) {
+      console.error('[ZarrTesseraSource] Failed to create WorkerPool:', err);
+      throw err;
+    }
 
     // Suppress AbortError from MapLibre ImageSource.updateImage internal fetches.
     // These fire when a source is removed while an image load is in flight — benign.
@@ -98,6 +103,7 @@ export class ZarrTesseraSource {
       // Load visible chunks immediately
       this.updateVisibleChunks();
     } catch (err) {
+      console.error('[ZarrTesseraSource] addTo failed:', err);
       this.emit('error', err instanceof Error ? err : new Error(String(err)));
       throw err;
     }

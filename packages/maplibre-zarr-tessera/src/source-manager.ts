@@ -113,6 +113,9 @@ export class ZarrSourceManager {
     try {
       const src = await pending;
       return src;
+    } catch (err) {
+      console.error(`[ZarrSourceManager] Failed to open zone ${zoneId}:`, err);
+      throw err;
     } finally {
       this.opening.delete(zoneId);
     }

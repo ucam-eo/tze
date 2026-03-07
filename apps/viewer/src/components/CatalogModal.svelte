@@ -25,6 +25,26 @@
     }
   });
 
+  // Initialize the source manager when both map and zones are ready.
+  // This handles the race where the catalog loads before the map's 'load' event fires.
+  let managerInitStarted = $state(false);
+  $effect(() => {
+    const map = $mapInstance;
+    const allZones = $zones;
+    if (map && allZones.length > 0 && $catalogStatus === 'loaded' && !managerInitStarted) {
+      managerInitStarted = true;
+      const center = map.getCenter();
+      let initialZoneId: string | undefined;
+      for (const zone of allZones) {
+        if (pointInBbox(center.lng, center.lat, zone.bbox)) {
+          initialZoneId = zone.id;
+          break;
+        }
+      }
+      initManager(initialZoneId ?? allZones[0].id);
+    }
+  });
+
   async function fetchCatalog() {
     const url = urlInput.trim();
     if (!url) return;
@@ -33,6 +53,7 @@
     $catalogStatus = 'loading';
     $catalogError = '';
     $zones = [];
+    managerInitStarted = false;
     $status = 'Loading catalog...';
 
     try {
@@ -41,23 +62,10 @@
       $globalPreviewUrl = result.globalPreviewUrl ?? '';
       $globalPreviewBounds = result.globalBounds;
       $catalogStatus = 'loaded';
+      console.log('[CatalogModal] Catalog loaded:', result.zones.length, 'zones, preview:', result.globalPreviewUrl);
       $status = `${result.zones.length} zones discovered${result.globalPreviewUrl ? ' (global preview available)' : ''}`;
-
-      // Initialize the multi-zone source manager
-      const map = $mapInstance;
-      if (map && result.zones.length > 0) {
-        const center = map.getCenter();
-        // Find the zone under the current map center for initial load
-        let initialZoneId: string | undefined;
-        for (const zone of result.zones) {
-          if (pointInBbox(center.lng, center.lat, zone.bbox)) {
-            initialZoneId = zone.id;
-            break;
-          }
-        }
-        await initManager(initialZoneId ?? result.zones[0].id);
-      }
     } catch (err) {
+      console.error('[CatalogModal] fetchCatalog failed:', err);
       $catalogStatus = 'error';
       $catalogError = (err as Error).message;
       $status = `Catalog error: ${(err as Error).message}`;
