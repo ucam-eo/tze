@@ -42,10 +42,13 @@ export const cambridgeSetupSteps: TutorialStep[] = [
       const center = ctx.manager.getChunkAtLngLat(0.1218, 52.22);
       if (!center) return;
 
-      // Build a rectangle polygon covering an 11×11 grid around the center chunk
+      // Build a rectangle polygon covering an 11×11 grid, shifted south
+      // by 2× the grid height so it intercepts the River Cam
       const buf = 5;
-      const tlCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci - buf, center.cj - buf);
-      const brCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci + buf, center.cj + buf);
+      const gridH = buf * 2 + 1; // 11
+      const ciOffset = center.ci + gridH * 2;
+      const tlCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, ciOffset - buf, center.cj - buf);
+      const brCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, ciOffset + buf, center.cj + buf);
       if (!tlCorners || !brCorners) return;
 
       const west = tlCorners[0][0], north = tlCorners[0][1];
