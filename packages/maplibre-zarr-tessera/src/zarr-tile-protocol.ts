@@ -139,8 +139,10 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
     const srcW = c1 - c0;
     const nBands = level.shape[2]; // typically 4 (RGBA)
 
-    // Render to RGBA tile via OffscreenCanvas
-    const canvas = new OffscreenCanvas(TILE_SIZE, TILE_SIZE);
+    // Render to RGBA tile via canvas and encode as PNG
+    const canvas = document.createElement('canvas');
+    canvas.width = TILE_SIZE;
+    canvas.height = TILE_SIZE;
     const ctx = canvas.getContext('2d')!;
     const imgData = ctx.createImageData(TILE_SIZE, TILE_SIZE);
     const out = imgData.data;
@@ -159,7 +161,7 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
     }
 
     ctx.putImageData(imgData, 0, 0);
-    const blob = await canvas.convertToBlob({ type: 'image/png' });
+    const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), 'image/png'));
     const arrayBuf = await blob.arrayBuffer();
     return { data: new Uint8Array(arrayBuf) };
   });
