@@ -87,8 +87,8 @@ export const segmentationTutorial: TutorialDef = {
         const center = ctx.manager.getChunkAtLngLat(0.30, 52.27);
         if (!center) return;
 
-        // Build a rectangle polygon covering a 7×7 grid around the center chunk
-        const buf = 3;
+        // Build a rectangle polygon covering an 11×11 grid around the center chunk
+        const buf = 5;
         const tlCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci - buf, center.cj - buf);
         const brCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci + buf, center.cj + buf);
         if (!tlCorners || !brCorners) return;
@@ -108,7 +108,7 @@ export const segmentationTutorial: TutorialDef = {
         await addRegion(feature);
 
         // Zoom to fit the loaded region with some breathing room
-        ctx.map.fitBounds([[west, south], [east, north]], { padding: 120, duration: 1500 });
+        ctx.map.fitBounds([[west, south], [east, north]], { padding: 200, duration: 1500 });
       },
       trigger: { kind: 'action-complete' },
     },
