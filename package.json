@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm -F viewer dev",
-    "build": "pnpm -F @ucam-eo/maplibre-zarr-tessera build && pnpm -F viewer build",
+    "build": "pnpm -F @ucam-eo/maplibre-zarr-tessera build && pnpm -F @ucam-eo/tessera-tasks build && pnpm -F viewer build",
     "test": "pnpm -r test",
     "check": "pnpm -r check"
   },

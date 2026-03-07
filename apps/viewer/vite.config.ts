@@ -63,6 +63,9 @@ export default defineConfig({
       '@ucam-eo/maplibre-zarr-tessera': path.resolve(
         __dirname, '../../packages/maplibre-zarr-tessera/src/index.ts'
       ),
+      '@ucam-eo/tessera-tasks': path.resolve(
+        __dirname, '../../packages/tessera-tasks/src/index.ts'
+      ),
     },
   },
 });

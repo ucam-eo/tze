@@ -23,6 +23,9 @@ importers:
       '@ucam-eo/maplibre-zarr-tessera':
         specifier: workspace:*
         version: link:../../packages/maplibre-zarr-tessera
+      '@ucam-eo/tessera-tasks':
+        specifier: workspace:*
+        version: link:../../packages/tessera-tasks
       lucide-svelte:
         specifier: ^0.575.0
         version: 0.575.0(svelte@5.53.3)
