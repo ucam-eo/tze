@@ -72,6 +72,9 @@
     map.on('load', () => {
       $mapInstance = map;
 
+      // Default to satellite basemap
+      switchBasemap('satellite');
+
       // Add hover highlight layers (initially empty)
       map.addSource('tile-hover', {
         type: 'geojson',
