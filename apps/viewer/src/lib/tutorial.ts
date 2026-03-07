@@ -55,6 +55,8 @@ export interface TutorialContext {
   };
   flyTo(opts: { center: [number, number]; zoom?: number; duration?: number }): Promise<void>;
   waitForEvent(event: string, timeout?: number): Promise<void>;
+  /** Ensure the zone source at the given coordinate is open and ready. */
+  ensureZoneAt(lng: number, lat: number): Promise<void>;
   similarityClick(lng: number, lat: number): void;
   openOsmModal(opts?: { autoImport?: boolean }): void;
   closeOsmModal(): void;

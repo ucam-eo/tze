@@ -131,6 +131,12 @@
           mgr.on(event, handler);
         });
       },
+      async ensureZoneAt(lng: number, lat: number) {
+        const zones = mgr.zonesAtPoint(lng, lat);
+        for (const zone of zones) {
+          await mgr.getSource(zone.id);
+        }
+      },
       similarityClick(lng: number, lat: number) {
         similarityRef?.handleClick(lng, lat);
       },

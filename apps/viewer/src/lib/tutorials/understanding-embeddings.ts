@@ -1,5 +1,4 @@
 import type { TutorialDef } from '../tutorial';
-import { get } from 'svelte/store';
 
 const TESSERA_DIAGRAM = `<svg viewBox="0 0 490 380" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;">
   <rect width="490" height="380" rx="6" fill="#0a0a0e" stroke="#374151" stroke-width="0.5" opacity="0.9"/>
@@ -181,8 +180,7 @@ export const understandingEmbeddings: TutorialDef = {
       title: 'Loading Zone Data',
       description: 'Waiting for the zone metadata and tile grid to load...',
       action: async (ctx) => {
-        if (get(ctx.stores.metadata)) return;
-        await ctx.waitForEvent('metadata-loaded', 15000);
+        await ctx.ensureZoneAt(0.1218, 52.22);
       },
       trigger: { kind: 'action-complete' },
     },
@@ -211,9 +209,8 @@ export const understandingEmbeddings: TutorialDef = {
         if (!chunk) return;
         if (ctx.manager.regionHasTile(chunk.zoneId, chunk.ci, chunk.cj)) return;
         const src = await ctx.manager.getSource(chunk.zoneId);
-        const loaded = ctx.waitForEvent('embeddings-loaded', 30000);
         await src.loadFullChunk(chunk.ci, chunk.cj);
-        await loaded;
+        ctx.stores.simEmbeddingTileCount.set(ctx.manager.totalTileCount());
       },
       trigger: { kind: 'action-complete' },
     },

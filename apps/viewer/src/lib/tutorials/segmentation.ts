@@ -1,5 +1,4 @@
 import type { TutorialDef } from '../tutorial';
-import { get } from 'svelte/store';
 import { clearSegmentation } from '../segment';
 import { segmentPolygons } from '../../stores/segmentation';
 
@@ -63,8 +62,7 @@ export const segmentationTutorial: TutorialDef = {
       title: 'Loading Zone Data',
       description: 'Waiting for the zone metadata and tile grid to load...',
       action: async (ctx) => {
-        if (get(ctx.stores.metadata)) return;
-        await ctx.waitForEvent('metadata-loaded', 15000);
+        await ctx.ensureZoneAt(0.30, 52.27);
       },
       trigger: { kind: 'action-complete' },
     },
@@ -89,9 +87,8 @@ export const segmentationTutorial: TutorialDef = {
         if (!chunk) return;
         if (ctx.manager.regionHasTile(chunk.zoneId, chunk.ci, chunk.cj)) return;
         const src = await ctx.manager.getSource(chunk.zoneId);
-        const loaded = ctx.waitForEvent('embeddings-loaded', 30000);
         await src.loadFullChunk(chunk.ci, chunk.cj);
-        await loaded;
+        ctx.stores.simEmbeddingTileCount.set(ctx.manager.totalTileCount());
       },
       trigger: { kind: 'action-complete' },
     },

@@ -125,7 +125,9 @@ export const classifyWithOsm: TutorialDef = {
         ctx.manager.clearClassificationOverlays();
         const regions = ctx.manager.getEmbeddingRegions();
         if (regions.size === 0) return;
-        const [zoneId, region] = regions.entries().next().value;
+        const first = regions.entries().next().value;
+        if (!first) return;
+        const [zoneId, region] = first;
         const src = ctx.manager.getOpenSource(zoneId);
         if (!src) return;
 
