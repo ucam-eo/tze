@@ -209,8 +209,8 @@ export const understandingEmbeddings: TutorialDef = {
         if (!center) return;
         const src = await ctx.manager.getSource(center.zoneId);
 
-        // Build a 3×3 grid of tiles around the center chunk
-        const buf = 1;
+        // Build a 7×7 grid of tiles around the center chunk
+        const buf = 3;
         const chunks: { ci: number; cj: number }[] = [];
         for (let di = -buf; di <= buf; di++) {
           for (let dj = -buf; dj <= buf; dj++) {
@@ -226,7 +226,7 @@ export const understandingEmbeddings: TutorialDef = {
         if (bounds) {
           ctx.map.fitBounds(
             [[bounds[1], bounds[0]], [bounds[3], bounds[2]]],
-            { padding: 40, duration: 1500 },
+            { padding: 80, duration: 1500 },
           );
         }
       },
