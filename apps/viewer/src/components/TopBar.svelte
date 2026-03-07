@@ -385,7 +385,7 @@
     </button>
 
     {#if searchOpen}
-      <button type="button" class="fixed inset-0 z-30 cursor-default" tabindex="-1" onclick={closeSearch}></button>
+      <button type="button" class="fixed inset-0 z-30 cursor-default" tabindex="-1" aria-label="Close search" onclick={closeSearch}></button>
       <div class="absolute top-full right-0 mt-1 z-40
                   bg-gray-950 border border-gray-700/80 rounded shadow-xl
                   min-w-[240px] py-1">
@@ -434,7 +434,7 @@
     </button>
 
     {#if regionsOpen}
-      <button type="button" class="fixed inset-0 z-30 cursor-default" tabindex="-1" onclick={() => { regionsOpen = false; }}></button>
+      <button type="button" class="fixed inset-0 z-30 cursor-default" tabindex="-1" aria-label="Close regions menu" onclick={() => { regionsOpen = false; }}></button>
       <div class="absolute top-full right-0 mt-1 z-40
                   bg-gray-950 border border-gray-700/80 rounded shadow-xl
                   min-w-[260px] p-2 space-y-2">
