@@ -5,7 +5,7 @@
     kValue, confidenceThreshold, classificationOpacity, isClassified,
     labelCounts, addClass, removeClass, clearLabels,
   } from '../stores/classifier';
-  import { classifyTiles, type ClassifyProgress } from '../lib/classify';
+  import { classifyTiles, type ClassifyProgress } from '@ucam-eo/tessera-tasks';
   interface Props {
     onOpenOsm?: () => void;
   }

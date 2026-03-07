@@ -1,24 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import type { EmbeddingAt } from '@ucam-eo/maplibre-zarr-tessera';
-
-export interface ClassDef {
-  name: string;
-  color: string;  // hex color
-  id: number;
-}
-
-export type LabelSource = 'human' | 'osm';
-
-export interface LabelPoint {
-  lngLat: [number, number];
-  ci: number;
-  cj: number;
-  row: number;
-  col: number;
-  classId: number;
-  embedding: Float32Array;
-  source: LabelSource;
-}
+import type { ClassDef, LabelSource, LabelPoint } from '@ucam-eo/tessera-tasks';
+export type { ClassDef, LabelSource, LabelPoint };
 
 // --- Stores ---
 export const classes = writable<ClassDef[]>([]);

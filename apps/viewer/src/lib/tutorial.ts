@@ -4,7 +4,7 @@ import type { Writable, Readable } from 'svelte/store';
 import type { ToolId } from '../stores/tools';
 import type { StoreMetadata } from '@ucam-eo/maplibre-zarr-tessera';
 import type { SimilarityResult } from '@ucam-eo/tessera-tasks';
-import type { ClassDef, LabelPoint } from '../stores/classifier';
+import type { ClassDef, LabelPoint } from '@ucam-eo/tessera-tasks';
 
 export type StepTrigger =
   | { kind: 'click' }
