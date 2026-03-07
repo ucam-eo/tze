@@ -15,3 +15,9 @@ export {
   type ClassifyProgress,
   type OnBatchUpdate,
 } from './classify.js';
+
+export {
+  SegmentationSession,
+  type SegmentationSessionOptions,
+  type SegmentResult,
+} from './segment.js';
