@@ -3,6 +3,8 @@ import { ZarrSourceManager } from '@ucam-eo/maplibre-zarr-tessera';
 import type { ZoneDescriptor } from '../lib/stac';
 import { mapInstance } from './map';
 import { sourceManager, metadata, bands, opacity, preview, loading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
+import { clearAllRegions } from './drawing';
+import { simSelectedPixel, simScores, simRefEmbedding } from './similarity';
 
 export const catalogUrl = writable('https://dl2.geotessera.org/zarr/v1/catalog.json');
 export const catalogStatus = writable<'idle' | 'loading' | 'loaded' | 'error'>('idle');
@@ -83,6 +85,12 @@ export async function switchYear(year: string): Promise<void> {
   if (!years.includes(year)) return;
 
   activeYear.set(year);
+
+  // Clear analysis state — embeddings are year-specific
+  clearAllRegions();
+  simSelectedPixel.set(null);
+  simRefEmbedding.set(null);
+  simScores.set(new Map());
 
   // Update global preview URL for this year
   const urls = get(globalPreviewUrls);
