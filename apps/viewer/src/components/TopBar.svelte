@@ -282,41 +282,6 @@
     <span class="text-term-cyan text-[11px] font-bold tracking-[0.2em] uppercase hidden sm:inline">TZE</span>
   </div>
 
-  <!-- Year selector -->
-  {#if $availableYears.length > 1}
-    <div class="relative">
-      <button
-        onclick={() => { yearDropdownOpen = !yearDropdownOpen; }}
-        class="flex items-center gap-1 px-1.5 h-5 rounded text-[9px]
-               border border-gray-700/60 transition-all
-               text-term-cyan hover:border-term-cyan/40"
-      >
-        {$activeYear}
-        <ChevronDown size={9} class="text-gray-600" />
-      </button>
-
-      {#if yearDropdownOpen}
-        <button type="button" class="fixed inset-0 z-30 cursor-default" tabindex="-1" aria-label="Close year menu" onclick={() => { yearDropdownOpen = false; }}></button>
-        <div class="absolute top-full left-0 mt-1 z-40
-                    bg-gray-950 border border-gray-700/80 rounded shadow-xl
-                    min-w-[70px] py-1">
-          {#each $availableYears as year}
-            <button
-              onclick={() => { switchYear(year); yearDropdownOpen = false; }}
-              class="flex items-center w-full text-left px-3 py-1
-                     text-[10px] transition-colors
-                     {$activeYear === year
-                       ? 'text-term-cyan bg-term-cyan/10'
-                       : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}"
-            >
-              {year}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  {/if}
-
   <!-- Tutorial dropdown (desktop) -->
   <div class="hidden sm:block"><TutorialDropdown /></div>
 
@@ -576,30 +541,61 @@
     </button>
   </div>
 
-  <!-- Catalog status -->
-  <button
-    onclick={onOpenCatalog}
-    class="flex items-center gap-1 px-1.5 py-1 rounded
-           text-gray-300 hover:bg-gray-800/60 transition-colors shrink-0"
-    title="Catalog settings"
-  >
-    <div class="w-1.5 h-1.5 rounded-full {healthColor}"></div>
-    <span class="text-[10px] hidden sm:inline">
-      {#if $catalogStatus === 'loaded'}
-        {$zones.length}z
-        {#if $availableYears.length > 1}
-          <span class="text-gray-600">{$activeYear}</span>
+  <!-- Catalog status + year selector -->
+  <div class="relative flex items-center shrink-0">
+    <button
+      onclick={onOpenCatalog}
+      class="flex items-center gap-1 px-1.5 py-1 rounded-l
+             text-gray-300 hover:bg-gray-800/60 transition-colors"
+      title="Catalog settings"
+    >
+      <div class="w-1.5 h-1.5 rounded-full {healthColor}"></div>
+      <span class="text-[10px] hidden sm:inline">
+        {#if $catalogStatus === 'loaded'}
+          {$zones.length}z
+        {:else if $catalogStatus === 'loading'}
+          ...
+        {:else if $catalogStatus === 'error'}
+          Err
+        {:else}
+          --
         {/if}
-      {:else if $catalogStatus === 'loading'}
-        ...
-      {:else if $catalogStatus === 'error'}
-        Err
-      {:else}
-        --
+      </span>
+      {#if $metadata && $loading.total > 0}
+        <span class="text-[10px] text-term-cyan/60 tabular-nums hidden sm:inline">{$loading.done}/{$loading.total}</span>
       {/if}
-    </span>
-    {#if $metadata && $loading.total > 0}
-      <span class="text-[10px] text-term-cyan/60 tabular-nums hidden sm:inline">{$loading.done}/{$loading.total}</span>
+    </button>
+    {#if $availableYears.length > 1}
+      <button
+        onclick={() => { yearDropdownOpen = !yearDropdownOpen; }}
+        class="flex items-center gap-0.5 px-1 py-1 rounded-r
+               text-term-cyan text-[10px] hover:bg-gray-800/60 transition-colors
+               border-l border-gray-700/40"
+        title="Switch year"
+      >
+        {$activeYear}
+        <ChevronDown size={8} class="text-gray-600" />
+      </button>
+
+      {#if yearDropdownOpen}
+        <button type="button" class="fixed inset-0 z-30 cursor-default" tabindex="-1" aria-label="Close year menu" onclick={() => { yearDropdownOpen = false; }}></button>
+        <div class="absolute top-full right-0 mt-1 z-40
+                    bg-gray-950 border border-gray-700/80 rounded shadow-xl
+                    min-w-[70px] py-1">
+          {#each $availableYears as year}
+            <button
+              onclick={() => { switchYear(year); yearDropdownOpen = false; }}
+              class="flex items-center w-full text-left px-3 py-1
+                     text-[10px] transition-colors
+                     {$activeYear === year
+                       ? 'text-term-cyan bg-term-cyan/10'
+                       : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}"
+            >
+              {year}
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/if}
-  </button>
+  </div>
 </div>
