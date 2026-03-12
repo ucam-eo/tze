@@ -22,14 +22,15 @@ async function fetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
  */
 export interface CatalogResult {
   zones: ZoneDescriptor[];
-  globalPreviewUrl: string | null;
+  availableYears: string[];               // e.g. ["2024", "2025"]
+  globalPreviewUrls: Record<string, string>;  // year → preview zarr URL
+  globalPreviewUrl: string | null;         // keep for back-compat (latest year)
   /** Union of all zone bounding boxes [west, south, east, north] */
   globalBounds: [number, number, number, number] | null;
 }
 
 export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Promise<CatalogResult> {
   const zones: ZoneDescriptor[] = [];
-  let globalPreviewUrl: string | null = null;
   let globalBounds: [number, number, number, number] | null = null;
 
   // Resolve relative catalog URLs against the page origin so that
@@ -66,7 +67,7 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
       zones.push({
         id: item.id as string,
         utmZone: (props.utm_zone as number) ?? 0,
-        epsg: (props.crs_epsg as number) ?? 0,
+        epsg: props['proj:code'] ? parseInt((props['proj:code'] as string).split(':')[1], 10) : ((props.crs_epsg as number) ?? 0),
         bbox: item.bbox as [number, number, number, number],
         geometry: (item.geometry as GeoJSON.Polygon),
         zarrUrl,
@@ -78,27 +79,39 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
   // Sort by UTM zone number
   zones.sort((a, b) => a.utmZone - b.utmZone);
 
-  // Probe for global preview store next to the catalog
+  // Probe for global preview stores (one per year)
   const baseUrl = resolvedCatalogUrl.replace(/\/[^/]*$/, '/');
-  // Find the latest year from discovered zones
-  const years = [...new Set(zones.map(z => z.id.match(/_(\d{4})$/)?.[1]).filter(Boolean))].sort();
-  const latestYear = years[years.length - 1] ?? '2025';
-  const candidateUrl = `${baseUrl}global_rgb_${latestYear}.zarr`;
-  try {
-    const resp = await fetch(`${candidateUrl}/zarr.json`, { signal });
-    if (resp.ok) {
-      globalPreviewUrl = candidateUrl;
-      // Try to read spatial bounds from the store's metadata
-      const zarrMeta = await resp.json() as Record<string, unknown>;
-      const attrs = zarrMeta.attributes as Record<string, unknown> | undefined;
-      const spatial = attrs?.spatial as { bounds?: [number, number, number, number] } | undefined;
-      if (spatial?.bounds) {
-        globalBounds = spatial.bounds;
+  const years = [...new Set(
+    zones.map(z => z.id.match(/_(\d{4})$/)?.[1]).filter(Boolean)
+  )].sort() as string[];
+
+  const globalPreviewUrls: Record<string, string> = {};
+  for (const year of years) {
+    const candidateUrl = `${baseUrl}global_rgb_${year}.zarr`;
+    try {
+      const resp = await fetch(`${candidateUrl}/zarr.json`, { signal });
+      if (resp.ok) {
+        globalPreviewUrls[year] = candidateUrl;
+        // Read bounds from the first successful probe
+        if (!globalBounds) {
+          const zarrMeta = await resp.json() as Record<string, unknown>;
+          const attrs = zarrMeta.attributes as Record<string, unknown> | undefined;
+          const spatialBbox = attrs?.['spatial:bbox'] as [number, number, number, number] | undefined;
+          const spatial = attrs?.spatial as { bounds?: [number, number, number, number] } | undefined;
+          if (spatialBbox) {
+            globalBounds = spatialBbox;
+          } else if (spatial?.bounds) {
+            globalBounds = spatial.bounds;
+          }
+        }
       }
+    } catch {
+      // Preview not available for this year
     }
-  } catch {
-    // Global preview not available — that's fine
   }
+
+  const latestYear = years[years.length - 1] ?? null;
+  const globalPreviewUrl = latestYear ? (globalPreviewUrls[latestYear] ?? null) : null;
 
   // Fall back to computing bounds from zone bboxes
   if (!globalBounds && zones.length > 0) {
@@ -110,7 +123,7 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
     ];
   }
 
-  return { zones, globalPreviewUrl, globalBounds };
+  return { zones, availableYears: years, globalPreviewUrls, globalPreviewUrl, globalBounds };
 }
 
 /** Simple point-in-bbox test (WGS84). */
