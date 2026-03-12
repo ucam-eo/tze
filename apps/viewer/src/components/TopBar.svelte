@@ -3,7 +3,7 @@
     Search, Crosshair, BoxSelect, Pentagon, Save, FolderOpen, User,
     X, Trash2, Upload, Download, Tags, Scan, ChevronDown,
   } from 'lucide-svelte';
-  import { zones, catalogStatus } from '../stores/stac';
+  import { zones, catalogStatus, availableYears, activeYear, switchYear } from '../stores/stac';
   import { metadata, loading } from '../stores/zarr';
   import { mapInstance } from '../stores/map';
   import { get } from 'svelte/store';
@@ -279,6 +279,23 @@
     <span class="text-term-cyan text-[11px] font-bold tracking-[0.2em] uppercase hidden sm:inline">TZE</span>
   </div>
 
+  <!-- Year toggle -->
+  {#if $availableYears.length > 1}
+    <div class="flex items-center rounded border border-gray-700/60 overflow-hidden h-5">
+      {#each $availableYears as year}
+        <button
+          onclick={() => switchYear(year)}
+          class="px-1.5 text-[9px] h-full transition-all
+                 {$activeYear === year
+                   ? 'bg-term-cyan/15 text-term-cyan border-term-cyan/40'
+                   : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/60'}"
+        >
+          {year}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   <!-- Tutorial dropdown (desktop) -->
   <div class="hidden sm:block"><TutorialDropdown /></div>
 
@@ -549,6 +566,9 @@
     <span class="text-[10px] hidden sm:inline">
       {#if $catalogStatus === 'loaded'}
         {$zones.length}z
+        {#if $availableYears.length > 1}
+          <span class="text-gray-600">{$activeYear}</span>
+        {/if}
       {:else if $catalogStatus === 'loading'}
         ...
       {:else if $catalogStatus === 'error'}
