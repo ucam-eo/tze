@@ -25,11 +25,12 @@ export async function openStore(url: string): Promise<ZarrStore> {
   const scalesArr = await zarr.open(rootLoc.resolve('scales'), { kind: 'array' });
 
   const utmZone = attrs.utm_zone as number;
-  const epsg = attrs.crs_epsg as number;
-  const transform = attrs.transform as [number, number, number, number, number, number];
+  const projCode = attrs['proj:code'] as string | undefined;
+  const epsg = projCode ? parseInt(projCode.split(':')[1], 10) : (attrs.crs_epsg as number);
+  const transform = (attrs['spatial:transform'] ?? attrs.transform) as [number, number, number, number, number, number];
 
   if (!utmZone || !transform || !embArr.shape) {
-    throw new Error('Missing required store metadata (utm_zone, transform, shape)');
+    throw new Error('Missing required store metadata (utm_zone, spatial:transform, shape)');
   }
 
   // Try optional preview arrays

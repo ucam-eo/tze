@@ -9,7 +9,7 @@ The global preview is a Zarr v3 store with a multiscale pyramid:
 
 ```
 global_rgb_{year}.zarr/
-  zarr.json                  # root: multiscales + spatial.bounds
+  zarr.json                  # root: multiscales + spatial:bbox
   0/
     rgb/  c/0/0/0 ...        # full resolution (lat, lon, band)
     band/ c/0               # coordinate array [0,1,2,3]
@@ -38,8 +38,8 @@ be mixed.
 
 ### Bounds Computation
 
-For each zone store, the code reads `crs_epsg`, `transform` (affine
-parameters), and the preview array shape. It computes 8 sample points
+For each zone store, the code reads `proj:code`, `spatial:transform`
+(affine parameters), and the preview array shape. It computes 8 sample points
 in UTM coordinates (4 corners + 4 mid-edge points for accuracy at high
 latitudes) and reprojects them from `EPSG:{zone}` to `EPSG:4326` via
 `pyproj.Transformer(always_xy=True)`. The min/max lon/lat across all
@@ -92,19 +92,24 @@ The store root attributes contain:
 
 ```json
 {
+  "zarr_conventions": [
+    {"name": "multiscales", "uuid": "d35379db-..."},
+    {"name": "proj:", "uuid": "f17cb550-..."},
+    {"name": "spatial:", "uuid": "689b58e2-..."}
+  ],
+  "proj:code": "EPSG:4326",
   "multiscales": {
     "layout": [
-      {"asset": "0", "transform": {"scale": [1, 1], "translation": [0, 0]}},
+      {"asset": "0", "transform": {"scale": [1, 1], "translation": [0, 0]},
+       "spatial:shape": [1800000, 3600000], "spatial:transform": [0.0001, 0, -180, 0, -0.0001, 90]},
       {"asset": "1", "transform": {"scale": [2, 2], "translation": [0.5, 0.5]},
-       "derived_from": "0", "resampling_method": "mean"},
+       "derived_from": "0", "resampling_method": "mean",
+       "spatial:shape": [900000, 1800000], "spatial:transform": [0.0002, 0, -180, 0, -0.0002, 90]},
       ...
-    ],
-    "crs": "EPSG:4326"
+    ]
   },
-  "spatial": {
-    "bounds": [west, south, east, north],
-    "resolution": 0.0001
-  }
+  "spatial:dimensions": ["lat", "lon"],
+  "spatial:bbox": [west, south, east, north]
 }
 ```
 
@@ -114,7 +119,7 @@ can read all array shapes/codecs from a single `zarr.json` fetch.
 
 ### Critical Invariant
 
-**`spatial.bounds` must match the array dimensions.** The bounds define
+**`spatial:bbox` must match the array dimensions.** The bounds define
 the geographic extent that `ceil(extent / resolution)` must equal the
 array's pixel count. If the bounds are wrong (e.g. computed from a
 different set of zones than were used to build the store), tiles will
@@ -152,12 +157,12 @@ After zone discovery, the viewer probes for the global preview store:
 ```typescript
 const candidateUrl = `${baseUrl}global_rgb_${latestYear}.zarr`;
 const resp = await fetch(`${candidateUrl}/zarr.json`);
-// Read attributes.spatial.bounds from zarr.json
+// Read attributes["spatial:bbox"] from zarr.json
 ```
 
 This gives `globalPreviewUrl` and `globalBounds` (format:
 `[west, south, east, north]`). Falls back to the union of zone bboxes
-if the store has no `spatial.bounds`.
+if the store has no `spatial:bbox`.
 
 ## 4. Rendering (`zarr-source.ts` + `@carbonplan/zarr-layer`)
 
@@ -240,7 +245,7 @@ utm29_2025.zarr ─┘   pyramid coarsen
               catalog.json (STAC)
                       │
                       │ loadCatalog() in stac.ts
-                      │   fetch zarr.json, read spatial.bounds
+                      │   fetch zarr.json, read spatial:bbox
                       ▼
               {globalPreviewUrl, globalBounds}
                       │
@@ -256,7 +261,7 @@ utm29_2025.zarr ─┘   pyramid coarsen
 
 ## 6. Common Pitfalls
 
-**Bounds mismatch**: If `spatial.bounds` doesn't match the array
+**Bounds mismatch**: If `spatial:bbox` doesn't match the array
 dimensions, tiles render at the wrong location. Always verify
 `ceil(lon_extent / resolution) == array_width`.
 
