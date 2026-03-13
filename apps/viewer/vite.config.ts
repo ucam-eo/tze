@@ -14,8 +14,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@ucam-eo/maplibre-zarr-tessera': path.resolve(
-        __dirname, '../../packages/maplibre-zarr-tessera/src/index.ts'
+      '@ucam-eo/maplibre-tessera': path.resolve(
+        __dirname, '../../packages/maplibre-tessera/src/index.ts'
       ),
       '@ucam-eo/tessera-tasks': path.resolve(
         __dirname, '../../packages/tessera-tasks/src/index.ts'

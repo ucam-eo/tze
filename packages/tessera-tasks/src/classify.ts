@@ -1,6 +1,6 @@
 import * as tf from '@tensorflow/tfjs-core';
 import '@tensorflow/tfjs-backend-webgl';
-import type { EmbeddingRegion } from '@ucam-eo/maplibre-zarr-tessera';
+import type { EmbeddingRegion } from '@ucam-eo/maplibre-tessera';
 
 export interface ClassDef {
   name: string;

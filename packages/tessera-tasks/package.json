@@ -32,7 +32,7 @@
     "onnxruntime-web": ">=1.20.0"
   },
   "dependencies": {
-    "@ucam-eo/maplibre-zarr-tessera": "workspace:*"
+    "@ucam-eo/maplibre-tessera": "workspace:*"
   },
   "devDependencies": {
     "@tensorflow/tfjs-core": "^4.22.0",

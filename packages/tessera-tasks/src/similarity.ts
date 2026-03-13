@@ -1,4 +1,4 @@
-import type { EmbeddingRegion } from '@ucam-eo/maplibre-zarr-tessera';
+import type { EmbeddingRegion } from '@ucam-eo/maplibre-tessera';
 
 /** Cached similarity data for the entire region. */
 export interface SimilarityResult {

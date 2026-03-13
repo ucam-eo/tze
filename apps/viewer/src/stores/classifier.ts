@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { EmbeddingAt } from '@ucam-eo/maplibre-zarr-tessera';
+import type { EmbeddingAt } from '@ucam-eo/maplibre-tessera';
 import type { ClassDef, LabelSource, LabelPoint } from '@ucam-eo/tessera-tasks';
 export type { ClassDef, LabelSource, LabelPoint };
 

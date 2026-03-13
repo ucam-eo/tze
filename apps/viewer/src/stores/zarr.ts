@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { StoreMetadata, ZarrSourceManager } from '@ucam-eo/maplibre-zarr-tessera';
+import type { StoreMetadata, ZarrSourceManager } from '@ucam-eo/maplibre-tessera';
 
 export const sourceManager = writable<ZarrSourceManager | null>(null);
 export const metadata = writable<StoreMetadata | null>(null);

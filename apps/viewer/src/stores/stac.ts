@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import { ZarrSourceManager, clearZarrProtocolCache } from '@ucam-eo/maplibre-zarr-tessera';
+import { ZarrSourceManager, clearZarrProtocolCache } from '@ucam-eo/maplibre-tessera';
 import type { ZoneDescriptor } from '../lib/stac';
 import { pointInBbox } from '../lib/stac';
 import { mapInstance } from './map';

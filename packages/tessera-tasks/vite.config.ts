@@ -13,7 +13,7 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
-        '@ucam-eo/maplibre-zarr-tessera',
+        '@ucam-eo/maplibre-tessera',
         '@tensorflow/tfjs-core',
         '@tensorflow/tfjs-backend-webgl',
         'onnxruntime-web',

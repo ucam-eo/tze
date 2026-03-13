@@ -1,4 +1,4 @@
-import type { EmbeddingRegion } from '@ucam-eo/maplibre-zarr-tessera';
+import type { EmbeddingRegion } from '@ucam-eo/maplibre-tessera';
 import type { SimilarityResult } from '@ucam-eo/tessera-tasks';
 
 export interface SubsampleResult {

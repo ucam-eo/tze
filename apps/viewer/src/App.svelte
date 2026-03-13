@@ -1,7 +1,7 @@
 <script lang="ts">
   import maplibregl from 'maplibre-gl';
   import { onMount } from 'svelte';
-  import { registerZarrProtocol } from '@ucam-eo/maplibre-zarr-tessera';
+  import { registerZarrProtocol } from '@ucam-eo/maplibre-tessera';
   import { mapInstance } from './stores/map';
 
   // Register zarr:// tile protocol once at module load

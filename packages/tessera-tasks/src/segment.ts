@@ -1,5 +1,5 @@
 import * as ort from 'onnxruntime-web';
-import type { EmbeddingRegion, ZarrTesseraSource } from '@ucam-eo/maplibre-zarr-tessera';
+import type { EmbeddingRegion, ZarrTesseraSource } from '@ucam-eo/maplibre-tessera';
 
 export interface SegmentResult {
   ci: number;

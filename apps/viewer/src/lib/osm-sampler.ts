@@ -1,8 +1,8 @@
 /** Point-in-polygon testing and embedding sampling for OSM polygons. */
 
-import type { ZarrTesseraSource } from '@ucam-eo/maplibre-zarr-tessera';
+import type { ZarrTesseraSource } from '@ucam-eo/maplibre-tessera';
 import type { OsmCategory } from './overpass';
-import type { EmbeddingAt } from '@ucam-eo/maplibre-zarr-tessera';
+import type { EmbeddingAt } from '@ucam-eo/maplibre-tessera';
 
 export interface SampledLabel {
   lngLat: [number, number];

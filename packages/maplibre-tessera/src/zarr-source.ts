@@ -1,11 +1,18 @@
 import type { Map as MaplibreMap } from 'maplibre-gl';
-import type {
-  ZarrTesseraOptions, StoreMetadata, CachedChunk,
-  ChunkBounds, UtmBounds, PreviewMode, ZarrTesseraEvents, DebugLogEntry,
-  EmbeddingRegion, EmbeddingAt,
-} from './types.js';
-import { UtmProjection } from './projection.js';
-import { openStore, fetchRegion, type ZarrStore } from './zarr-reader.js';
+import {
+  UtmProjection, openStore, fetchRegion,
+  type ZarrStore, type StoreMetadata, type EmbeddingRegion, type EmbeddingAt,
+  type ChunkBounds, type DebugLogEntry, type TesseraEvents, type UtmBounds,
+  type TesseraOptions,
+} from '@ucam-eo/tessera';
+import type { CachedChunk, PreviewMode, MaplibreDisplayOptions } from './types.js';
+
+/** Combined options type for ZarrTesseraSource (tessera core + MapLibre display). */
+export type ZarrTesseraOptions = TesseraOptions & MaplibreDisplayOptions;
+
+/** Backward-compatible alias: ZarrTesseraEvents → TesseraEvents */
+export type ZarrTesseraEvents = TesseraEvents;
+
 import { WorkerPool } from './worker-pool.js';
 import { RegionLoadingAnimation } from './region-loading-animation.js';
 import { clearZarrProtocolCache } from './zarr-tile-protocol.js';

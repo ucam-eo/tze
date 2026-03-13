@@ -8,10 +8,9 @@
  */
 import type { Map as MaplibreMap } from 'maplibre-gl';
 import { ZarrTesseraSource } from './zarr-source.js';
-import type {
-  ZarrTesseraOptions, StoreMetadata, PreviewMode,
-  EmbeddingRegion, EmbeddingAt, ZarrTesseraEvents, DebugLogEntry,
-} from './types.js';
+import type { ZarrTesseraOptions, ZarrTesseraEvents } from './zarr-source.js';
+import type { StoreMetadata, EmbeddingRegion, EmbeddingAt, DebugLogEntry } from '@ucam-eo/tessera';
+import type { PreviewMode } from './types.js';
 
 // ---- Zone descriptor (subset of the app-level ZoneDescriptor) ----
 

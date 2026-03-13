@@ -20,9 +20,9 @@ importers:
       '@tensorflow/tfjs-core':
         specifier: ^4.22.0
         version: 4.22.0
-      '@ucam-eo/maplibre-zarr-tessera':
+      '@ucam-eo/maplibre-tessera':
         specifier: workspace:*
-        version: link:../../packages/maplibre-zarr-tessera
+        version: link:../../packages/maplibre-tessera
       '@ucam-eo/tessera-tasks':
         specifier: workspace:*
         version: link:../../packages/tessera-tasks
@@ -70,18 +70,15 @@ importers:
         specifier: ^6.0.0
         version: 6.4.1(@types/node@25.3.2)(jiti@2.6.1)(lightningcss@1.31.1)(yaml@2.8.2)
 
-  packages/maplibre-zarr-tessera:
+  packages/maplibre-tessera:
     dependencies:
-      proj4:
-        specifier: ^2.20.3
-        version: 2.20.3
+      '@ucam-eo/tessera':
+        specifier: workspace:*
+        version: link:../tessera
       zarrita:
         specifier: github:avsm/zarrita.js#coalesce&path:packages/zarrita
         version: https://codeload.github.com/avsm/zarrita.js/tar.gz/6b14536e76259174e6bf566880096302c165678a#path:packages/zarrita
     devDependencies:
-      '@types/proj4':
-        specifier: ^2.19.0
-        version: 2.19.0
       maplibre-gl:
         specifier: ^4.7.1
         version: 4.7.1
@@ -128,9 +125,9 @@ importers:
 
   packages/tessera-tasks:
     dependencies:
-      '@ucam-eo/maplibre-zarr-tessera':
+      '@ucam-eo/maplibre-tessera':
         specifier: workspace:*
-        version: link:../maplibre-zarr-tessera
+        version: link:../maplibre-tessera
     devDependencies:
       '@tensorflow/tfjs-backend-webgl':
         specifier: ^4.22.0
