@@ -76,7 +76,7 @@
       });
     }
 
-    const add = (id: string, spec: Omit<maplibregl.LayerSpecification, 'id' | 'source'>) => {
+    const add = (id: string, spec: Record<string, unknown>) => {
       if (!map.getLayer(id)) map.addLayer({ id, source: VECTOR_SOURCE_ID, ...spec } as maplibregl.LayerSpecification);
     };
 

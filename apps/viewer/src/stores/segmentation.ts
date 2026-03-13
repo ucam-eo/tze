@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
+import type { FeatureCollection } from 'geojson';
 
-export const segmentPolygons = writable<GeoJSON.FeatureCollection>({
+export const segmentPolygons = writable<FeatureCollection>({
   type: 'FeatureCollection',
   features: [],
 });

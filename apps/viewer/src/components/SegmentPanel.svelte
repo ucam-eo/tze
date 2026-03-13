@@ -66,12 +66,12 @@
           region,
           src,
           threshold,
-          (done, total) => {
+          (done: number, total: number) => {
             progressDone = done;
             progressTotal = total;
           },
         );
-        allFeatures.push(...results.flatMap(r => r.polygons));
+        allFeatures.push(...results.flatMap((r: { polygons: GeoJSON.Feature[] }) => r.polygons));
       }
 
       resultCount = allFeatures.length;
@@ -88,7 +88,7 @@
     threshold = val;
     if (!segSession?.hasCachedProbabilities) return;
     const results = segSession!.rethreshold(val);
-    const features = results.flatMap(r => r.polygons);
+    const features = results.flatMap((r: { polygons: GeoJSON.Feature[] }) => r.polygons);
     resultCount = features.length;
     $segmentPolygons = { type: 'FeatureCollection', features };
   }

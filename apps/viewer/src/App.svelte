@@ -67,7 +67,7 @@
       center: [-0.12, 51.51],
       zoom: 6,
       minZoom: 2,
-      preserveDrawingBuffer: true,
+      canvasContextAttributes: { preserveDrawingBuffer: true },
     });
 
     map.on('load', () => {
@@ -210,7 +210,7 @@
 
       // Terra-draw for polygon/rectangle drawing
       const draw = new TerraDraw({
-        adapter: new TerraDrawMapLibreGLAdapter({ map, lib: maplibregl }),
+        adapter: new TerraDrawMapLibreGLAdapter({ map }),
         modes: [new TerraDrawPolygonMode(), new TerraDrawRectangleMode()],
       });
       terraDraw = draw;

@@ -15,7 +15,7 @@
     "@ucam-eo/tessera": "workspace:*",
     "@ucam-eo/tessera-tasks": "workspace:*",
     "lucide-svelte": "^0.575.0",
-    "maplibre-gl": "^4.7.1",
+    "maplibre-gl": "^5.20.1",
     "onnxruntime-web": "^1.24.2",
     "stac-js": "^0.2.1",
     "terra-draw": "^1.25.0",
@@ -23,6 +23,7 @@
     "umap-js": "^1.4.0"
   },
   "devDependencies": {
+    "@types/geojson": "^7946.0.16",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@tailwindcss/vite": "insiders",
     "svelte": "^5.46.4",

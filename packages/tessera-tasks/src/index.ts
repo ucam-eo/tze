@@ -28,5 +28,6 @@ export type {
   SegmentationSessionOptions,
   SegmentResult,
 } from './segment.js';
+export type { SegmentationSession } from './segment.js';
 
 export { ClassificationStore } from './classification-store.js';

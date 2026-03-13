@@ -19,8 +19,8 @@
       "esbuild"
     ],
     "overrides": {
-      "zarrita": "github:avsm/zarrita.js#9fd3970fafd1abf252c3ffb34cc61b6fd04f533d&path:packages/zarrita",
-      "@zarrita/storage": "github:avsm/zarrita.js#9fd3970fafd1abf252c3ffb34cc61b6fd04f533d&path:packages/@zarrita-storage"
+      "zarrita": "github:avsm/zarrita.js#a51753a73c9a4d889a0d3218ddd236bd52200d86&path:packages/zarrita",
+      "@zarrita/storage": "github:avsm/zarrita.js#a51753a73c9a4d889a0d3218ddd236bd52200d86&path:packages/@zarrita-storage"
     }
   },
   "devDependencies": {
