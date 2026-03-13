@@ -50,14 +50,15 @@ export function tileBounds(
  * Select the coarsest pyramid level with sufficient resolution for a given zoom.
  *
  * @remarks
- * Levels are ordered coarsest (index 0) to finest (index N-1). The function
- * walks from coarsest to finest and returns the first level whose longitude
- * pixel density is at least half of what is required to render a 256 px tile
- * cleanly. If no level is sufficient, the finest level (index N-1) is returned.
+ * Scans from the last level (coarsest) toward the first (finest), returning
+ * the coarsest level whose longitude pixel density is at least half of what
+ * is needed to render a 256 px tile. Falls back to the finest level (index 0)
+ * if none is sufficient.
  *
  * Shape convention: `[lat_pixels, lon_pixels, bands]`.
  *
- * @param levels - Array of level descriptors ordered coarsest (0) to finest (N-1).
+ * @param levels - Array of level descriptors as returned by the Zarr pyramid
+ *   (typically finest first, coarsest last).
  * @param z - Web Mercator zoom level.
  * @returns Index into `levels` of the selected level.
  */
@@ -66,11 +67,12 @@ export function selectLevel(
   z: number,
 ): number {
   const neededPxPerDeg = (TILE_SIZE * (1 << z)) / 360;
-  for (let i = 0; i < levels.length; i++) {
+  // Scan coarsest to finest (last → first), return the coarsest that suffices
+  for (let i = levels.length - 1; i >= 0; i--) {
     const pxPerDeg = levels[i].shape[1] / 360;
     if (pxPerDeg >= neededPxPerDeg * 0.5) return i;
   }
-  return levels.length - 1;
+  return 0;
 }
 
 /**

@@ -33,35 +33,37 @@ describe('tileBounds', () => {
 });
 
 describe('selectLevel', () => {
-  // Shape convention: [lat_pixels, lon_pixels, bands]
-  // Levels are ordered coarsest (index 0) to finest (index N-1).
+  // Levels are ordered finest (index 0) to coarsest (index N-1),
+  // matching the order produced by the Zarr multiscales layout.
+  // selectLevel scans coarsest-to-finest (last→first) and returns
+  // the coarsest level with sufficient resolution.
 
-  it('selects coarsest level with sufficient resolution', () => {
+  it('selects coarsest level at low zoom', () => {
     // At zoom 0: neededPxPerDeg = 256/360 ≈ 0.711, threshold = 0.356
-    // Level 0 (coarsest): 360px wide → 1.0 px/deg ≥ 0.356 → sufficient → return 0
+    // Level 1 (coarsest): 360px wide → 1.0 px/deg ≥ 0.356 → return 1
     const levels = [
+      { shape: [360, 720, 3] as [number, number, number] },  // finest
       { shape: [180, 360, 3] as [number, number, number] },  // coarsest
-      { shape: [360, 720, 3] as [number, number, number] },  // finer
     ];
     const idx = selectLevel(levels, 0);
-    expect(idx).toBe(0);
+    expect(idx).toBe(1); // picks coarsest that suffices
   });
 
-  it('selects finer level at higher zoom when coarse level is insufficient', () => {
+  it('selects finer level at higher zoom when coarsest is insufficient', () => {
     // At zoom 4: neededPxPerDeg = 256*16/360 ≈ 11.38, threshold ≈ 5.69
-    // Level 0 (coarsest): 1024px wide → 2.84 px/deg < 5.69 → NOT sufficient
-    // Level 1 (finer):    4096px wide → 11.38 px/deg ≥ 5.69 → sufficient → return 1
+    // Level 1 (coarsest): 1024px → 2.84 px/deg < 5.69 → NOT sufficient
+    // Level 0 (finest):   4096px → 11.38 px/deg ≥ 5.69 → return 0
     const levels = [
+      { shape: [2048, 4096, 3] as [number, number, number] },  // finest
       { shape: [512, 1024, 3] as [number, number, number] },   // coarsest
-      { shape: [2048, 4096, 3] as [number, number, number] },  // finer
     ];
     const idx = selectLevel(levels, 4);
-    expect(idx).toBe(1);
+    expect(idx).toBe(0); // needs finest level
   });
 
-  it('falls back to finest level (last index) when no level suffices', () => {
+  it('falls back to finest level (index 0) when none suffices', () => {
     const levels = [
-      { shape: [10, 20, 3] as [number, number, number] },  // very coarse
+      { shape: [10, 20, 3] as [number, number, number] },  // very coarse, only option
     ];
     const idx = selectLevel(levels, 10);
     expect(idx).toBe(0); // only level available
