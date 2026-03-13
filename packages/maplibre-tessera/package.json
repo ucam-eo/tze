@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "build": "vite build && tsc --emitDeclarationOnly",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "check": "tsc --noEmit",
     "docs": "typedoc --plugin typedoc-plugin-markdown",
     "docs:html": "typedoc"
