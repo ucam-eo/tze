@@ -1,2 +1,16 @@
 // @ucam-eo/tessera — core TESSERA embedding access library
-// Exports will be added as modules are implemented.
+
+export type {
+  TesseraOptions,
+  StoreMetadata,
+  ChunkRef,
+  ManagedChunk,
+  EmbeddingRegion,
+  EmbeddingAt,
+  ZoneDescriptor,
+  EmbeddingProgress,
+  DebugLogEntry,
+  UtmBounds,
+  TesseraEvents,
+  TileRendererOptions,
+} from './types.js';
