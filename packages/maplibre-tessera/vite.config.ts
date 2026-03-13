@@ -8,7 +8,7 @@ export default defineConfig({
       formats: ['es', 'cjs'],
       fileName: 'index',
     },
-    rollupOptions: {
+    rolldownOptions: {
       external: ['maplibre-gl'],
     },
   },

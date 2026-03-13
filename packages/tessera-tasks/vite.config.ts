@@ -7,11 +7,13 @@ export default defineConfig({
     lib: {
       entry: {
         index: './src/index.ts',
+        classify: './src/classify.ts',
+        segment: './src/segment.ts',
         'vite-plugin': './src/vite-plugin.ts',
       },
       formats: ['es', 'cjs'],
     },
-    rollupOptions: {
+    rolldownOptions: {
       external: [
         '@ucam-eo/maplibre-tessera',
         '@tensorflow/tfjs-core',

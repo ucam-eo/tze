@@ -7,7 +7,7 @@
     classificationStore,
   } from '../stores/classifier';
   import { get } from 'svelte/store';
-  import { classifyTiles, type ClassifyProgress } from '@ucam-eo/tessera-tasks';
+  import type { ClassifyProgress } from '@ucam-eo/tessera-tasks';
   interface Props {
     onOpenOsm?: () => void;
   }
@@ -63,6 +63,7 @@
       for (const [zoneId, region] of regions) {
         const displaySource = dm?.getOpenDisplaySource(zoneId);
         if (!displaySource) continue;
+        const { classifyTiles } = await import('@ucam-eo/tessera-tasks/classify');
         await classifyTiles(
           region,
           allLabels,

@@ -2,13 +2,20 @@
   import { ChevronDown, Sun } from 'lucide-svelte';
   import { sourceManager } from '../stores/zarr';
   import { segmentPolygons } from '../stores/segmentation';
-  import { SegmentationSession } from '@ucam-eo/tessera-tasks';
+  import type { SegmentationSession } from '@ucam-eo/tessera-tasks';
 
-  const segSession = new SegmentationSession({
-    modelUrl: `${import.meta.env.BASE_URL}models/solar_unet.onnx`,
-    statsUrl: `${import.meta.env.BASE_URL}models/solar_unet_stats.json`,
-    wasmPaths: `${import.meta.env.BASE_URL}ort-wasm/`,
-  });
+  let segSession: SegmentationSession | null = null;
+
+  async function getSegSession(): Promise<SegmentationSession> {
+    if (segSession) return segSession;
+    const { SegmentationSession: Cls } = await import('@ucam-eo/tessera-tasks/segment');
+    segSession = new Cls({
+      modelUrl: `${import.meta.env.BASE_URL}models/solar_unet.onnx`,
+      statsUrl: `${import.meta.env.BASE_URL}models/solar_unet_stats.json`,
+      wasmPaths: `${import.meta.env.BASE_URL}ort-wasm/`,
+    });
+    return segSession;
+  }
 
   const DETECTORS = [
     { id: 'solar', label: 'Solar Panels', icon: Sun },
@@ -54,7 +61,8 @@
         const src = mgr.getOpenSource(zoneId);
         if (!src) continue;
         // SegmentationSession.run expects a TesseraSource for projection
-        const results = await segSession.run(
+        const session = await getSegSession();
+        const results = await session.run(
           region,
           src,
           threshold,
@@ -78,15 +86,15 @@
 
   function updateThreshold(val: number) {
     threshold = val;
-    if (!segSession.hasCachedProbabilities) return;
-    const results = segSession.rethreshold(val);
+    if (!segSession?.hasCachedProbabilities) return;
+    const results = segSession!.rethreshold(val);
     const features = results.flatMap(r => r.polygons);
     resultCount = features.length;
     $segmentPolygons = { type: 'FeatureCollection', features };
   }
 
   function handleClear() {
-    segSession.clear();
+    segSession?.clear();
     hasProbs = false;
     resultCount = 0;
     $segmentPolygons = { type: 'FeatureCollection', features: [] };

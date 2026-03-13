@@ -1,6 +1,5 @@
 import type { TutorialDef } from '../tutorial';
 import { get } from 'svelte/store';
-import { classifyTiles } from '@ucam-eo/tessera-tasks';
 import { cambridgeSetupSteps } from './setup-cambridge';
 
 export const classifyWithOsm: TutorialDef = {
@@ -131,6 +130,7 @@ export const classifyWithOsm: TutorialDef = {
         const displaySrc = ctx.display?.getOpenDisplaySource(zoneId);
         if (!displaySrc) return;
 
+        const { classifyTiles } = await import('@ucam-eo/tessera-tasks/classify');
         await classifyTiles(
           region,
           allLabels,
