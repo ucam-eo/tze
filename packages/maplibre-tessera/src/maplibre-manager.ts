@@ -1,7 +1,7 @@
 import type { Map as MaplibreMap } from 'maplibre-gl';
 import {
   SourceManager,
-  TesseraSource,
+  type TesseraSource,
   type ZoneDescriptor,
   type StoreMetadata,
 } from '@ucam-eo/tessera';
@@ -16,12 +16,6 @@ import type { MaplibreDisplayOptions, PreviewMode } from './types.js';
  * routing display operations to the correct zone(s).  Data-access
  * operations (chunk loading, embedding queries, zone routing) are
  * available on {@link manager}.
- *
- * During the transition period the full display logic still lives in
- * `ZarrSourceManager`/`ZarrTesseraSource`.  This class establishes
- * the new composition API surface so that consumers can start
- * migrating to `.manager` without waiting for the full extraction
- * to complete.
  */
 export class MaplibreTesseraManager {
   /** The core data manager — use for zone routing, embedding queries, etc. */
