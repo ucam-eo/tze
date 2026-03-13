@@ -22,8 +22,13 @@ export interface LoadChunksOptions {
   /** AbortSignal to cancel in-flight fetches. */
   signal?: AbortSignal;
 
-  /** Progress callback invoked after each chunk completes. */
-  onProgress?: (loaded: number, total: number) => void;
+  /**
+   * Progress callback invoked after each chunk completes.
+   * @param loaded - Number of chunks finished so far.
+   * @param total - Total number of chunks requested.
+   * @param chunk - The chunk that just completed.
+   */
+  onProgress?: (loaded: number, total: number, chunk: ChunkRef) => void;
 }
 
 /**
@@ -185,7 +190,7 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
         if (this.regionHasTile(ci, cj)) {
           succeeded++;
           loaded++;
-          opts?.onProgress?.(loaded, total);
+          opts?.onProgress?.(loaded, total, chunks[idx]);
           this.emit('loading', { total, done: loaded });
           continue;
         }
@@ -197,7 +202,7 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
           this.debug('error', `Failed to load chunk (${ci},${cj}): ${(err as Error).message}`);
         }
         loaded++;
-        opts?.onProgress?.(loaded, total);
+        opts?.onProgress?.(loaded, total, chunks[idx]);
         this.emit('loading', { total, done: loaded });
       }
     };
