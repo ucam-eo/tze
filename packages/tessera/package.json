@@ -1,0 +1,35 @@
+{
+  "name": "@ucam-eo/tessera",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "vite build && tsc --emitDeclarationOnly",
+    "test": "vitest run",
+    "check": "tsc --noEmit",
+    "docs": "typedoc --plugin typedoc-plugin-markdown",
+    "docs:html": "typedoc --plugin none"
+  },
+  "dependencies": {
+    "proj4": "^2.20.3",
+    "zarrita": "^0.6.1"
+  },
+  "devDependencies": {
+    "@types/proj4": "^2.19.0",
+    "typedoc": "^0.28.0",
+    "typedoc-plugin-markdown": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vite-plugin-dts": "^4.0.0",
+    "vitest": "^3.0.0"
+  }
+}
