@@ -16,6 +16,7 @@
     "dist"
   ],
   "scripts": {
+    "prepare": "vite build && tsc --emitDeclarationOnly",
     "build": "vite build && tsc --emitDeclarationOnly",
     "test": "vitest run --passWithNoTests",
     "check": "tsc --noEmit",
