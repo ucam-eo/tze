@@ -41,8 +41,9 @@ export function setConfirmLargeRegion(fn: (count: number) => Promise<boolean>) {
   _confirmLargeRegion = fn;
 }
 
-/** Called when terra-draw finishes a shape. Starts loading chunks for the region. */
-export async function addRegion(feature: GeoJSON.Feature): Promise<void> {
+/** Called when terra-draw finishes a shape. Starts loading chunks for the region.
+ *  Returns false if the user cancelled (e.g. large region confirmation). */
+export async function addRegion(feature: GeoJSON.Feature): Promise<boolean> {
   const sm = get(sourceManager);
   const dm = get(displayManager);
   if (!sm) return;
@@ -52,7 +53,7 @@ export async function addRegion(feature: GeoJSON.Feature): Promise<void> {
 
   if (managedChunks.length > LARGE_REGION_THRESHOLD && _confirmLargeRegion) {
     const proceed = await _confirmLargeRegion(managedChunks.length);
-    if (!proceed) return;
+    if (!proceed) return false;
   }
 
   const region: RoiRegion = {
@@ -129,6 +130,7 @@ export async function addRegion(feature: GeoJSON.Feature): Promise<void> {
 
   roiLoading.set(null);
   simEmbeddingTileCount.set(sm.totalTileCount());
+  return true;
 }
 
 /** Remove a single region. Evict its exclusive tiles from the embedding cache. */

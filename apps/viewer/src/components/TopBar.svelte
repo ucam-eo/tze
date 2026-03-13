@@ -297,16 +297,16 @@
       {@const isSelected = $drawMode === tool.mode && !$roiDrawing}
       <button
         onclick={() => toggleDraw(tool.mode)}
-        class="flex items-center justify-center w-6 h-6 rounded
+        class="flex items-center justify-center w-7 h-7 rounded
                border transition-all
                {isActive
                  ? 'text-term-cyan border-term-cyan/60 bg-term-cyan/10 shadow-[0_0_6px_rgba(0,229,255,0.15)]'
                  : isSelected
                    ? 'text-term-cyan/50 border-term-cyan/25 bg-term-cyan/5'
-                   : 'text-gray-500 border-gray-700/60 hover:text-gray-400 hover:border-gray-600'}"
+                   : 'text-gray-300 border-gray-600 hover:text-white hover:border-gray-400 hover:bg-gray-800/50'}"
         title={tool.tip}
       >
-        <tool.icon size={13} />
+        <tool.icon size={15} />
       </button>
     {/each}
   </div>

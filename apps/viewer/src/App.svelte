@@ -232,8 +232,10 @@
         if (ctx.action === 'draw') {
           const feat = draw.getSnapshotFeature(id);
           if (feat) {
-            addRegion(feat as GeoJSON.Feature);
             roiDrawing.set(false);
+            addRegion(feat as GeoJSON.Feature).then((proceeded) => {
+              if (!proceeded) roiDrawing.set(true);
+            });
           }
         }
       });
