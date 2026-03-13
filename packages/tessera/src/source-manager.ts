@@ -95,6 +95,7 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
   private readonly baseOpts: Omit<TesseraOptions, 'url'>;
   private readonly sources = new Map<string, TesseraSource>();
   private readonly opening = new Map<string, Promise<TesseraSource>>();
+  private closed = false;
 
   /**
    * @param zones - Zone descriptors for all available UTM zones.
@@ -149,6 +150,8 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
    * @throws If the zone ID is unknown or the store cannot be opened.
    */
   async getSource(zoneId: string): Promise<TesseraSource> {
+    if (this.closed) throw new Error('SourceManager is closed');
+
     const existing = this.sources.get(zoneId);
     if (existing) return existing;
 
@@ -156,7 +159,7 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
     let pending = this.opening.get(zoneId);
     if (pending) return pending;
 
-    pending = this._openSource(zoneId);
+    pending = this.openZoneSource(zoneId);
     this.opening.set(zoneId, pending);
     try {
       return await pending;
@@ -180,7 +183,7 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
    *
    * @returns A read-only view of the internal sources map.
    */
-  getActiveSources(): Map<string, TesseraSource> {
+  getActiveSources(): ReadonlyMap<string, TesseraSource> {
     return this.sources;
   }
 
@@ -188,6 +191,7 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
    * Close all open sources, cancelling in-flight requests and releasing memory.
    */
   close(): void {
+    this.closed = true;
     for (const src of this.sources.values()) src.close();
     this.sources.clear();
     this.opening.clear();
@@ -210,13 +214,13 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
    */
   async getChunksInRegion(polygon: GeoJsonPolygon): Promise<ManagedChunk[]> {
     const zones = this.zonesForPolygon(polygon);
+    const srcs = await Promise.all(zones.map(z => this.getSource(z.id)));
     const allChunks: ManagedChunk[] = [];
 
-    for (const zone of zones) {
-      const src = await this.getSource(zone.id);
-      const chunks = src.getChunksInRegion(polygon);
+    for (let i = 0; i < zones.length; i++) {
+      const chunks = srcs[i].getChunksInRegion(polygon);
       for (const { ci, cj } of chunks) {
-        allChunks.push({ zoneId: zone.id, ci, cj });
+        allChunks.push({ zoneId: zones[i].id, ci, cj });
       }
     }
     return allChunks;
@@ -416,7 +420,7 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
   /**
    * All zone descriptors registered with this manager.
    */
-  getZones(): ZoneDescriptor[] {
+  getZones(): readonly ZoneDescriptor[] {
     return this.zones;
   }
 
@@ -430,7 +434,7 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
    * @param zoneId - Zone to open.
    * @throws If the zone ID is not found in the zone list.
    */
-  private async _openSource(zoneId: string): Promise<TesseraSource> {
+  private async openZoneSource(zoneId: string): Promise<TesseraSource> {
     const zone = this.zones.find(z => z.id === zoneId);
     if (!zone) throw new Error(`Unknown zone: ${zoneId}`);
 
@@ -454,6 +458,13 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
     forwardEvent('debug');
 
     await src.open();
+
+    // Guard: if close() ran while we were awaiting, discard this source
+    if (this.closed) {
+      src.close();
+      throw new Error('SourceManager was closed while opening zone');
+    }
+
     this.sources.set(zoneId, src);
     return src;
   }

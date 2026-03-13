@@ -103,4 +103,20 @@ describe('SourceManager', () => {
     mgr.off('error', cb);
     // Just verify event system is wired up
   });
+
+  it('getSource throws after close', async () => {
+    const mgr = new SourceManager(testZones);
+    mgr.close();
+    await expect(mgr.getSource('30N')).rejects.toThrow('SourceManager is closed');
+  });
+
+  it('zonesAtPoint returns both zones at shared boundary', () => {
+    const mgr = new SourceManager(testZones);
+    expect(mgr.zonesAtPoint(0, 52)).toHaveLength(2);
+  });
+
+  it('getPixelBoundsLngLat returns null with no sources open', () => {
+    const mgr = new SourceManager(testZones);
+    expect(mgr.getPixelBoundsLngLat(0, 0, 0, 0)).toBeNull();
+  });
 });
