@@ -1,5 +1,5 @@
 import * as ort from 'onnxruntime-web';
-import type { EmbeddingRegion, ZarrTesseraSource } from '@ucam-eo/maplibre-tessera';
+import type { EmbeddingRegion, TesseraSource } from '@ucam-eo/tessera';
 
 export interface SegmentResult {
   ci: number;
@@ -63,7 +63,7 @@ export class SegmentationSession {
    */
   async run(
     region: EmbeddingRegion,
-    source: ZarrTesseraSource,
+    source: TesseraSource,
     threshold = 0.5,
     onProgress?: (done: number, total: number) => void,
   ): Promise<SegmentResult[]> {
