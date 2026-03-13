@@ -17,7 +17,7 @@
     "test": "vitest run",
     "check": "tsc --noEmit",
     "docs": "typedoc --plugin typedoc-plugin-markdown",
-    "docs:html": "typedoc --plugin none"
+    "docs:html": "typedoc"
   },
   "dependencies": {
     "proj4": "^2.20.3",
