@@ -14,7 +14,9 @@
   },
   "scripts": {
     "build": "vite build && tsc --emitDeclarationOnly",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "docs": "typedoc --plugin typedoc-plugin-markdown",
+    "docs:html": "typedoc"
   },
   "dependencies": {
     "@ucam-eo/tessera": "workspace:*"
@@ -24,6 +26,8 @@
   },
   "devDependencies": {
     "@types/leaflet": "^1.9.0",
+    "typedoc": "^0.28.0",
+    "typedoc-plugin-markdown": "^4.0.0",
     "@types/node": "^25.5.0",
     "leaflet": "^1.9.0",
     "typescript": "^5.7.0",

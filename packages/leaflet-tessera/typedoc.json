@@ -1,0 +1,14 @@
+{
+  "entryPoints": ["src/index.ts"],
+  "out": "../../docs/api/leaflet-tessera",
+  "tsconfig": "./tsconfig.json",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "readme": "none",
+  "sort": ["source-order"],
+  "externalSymbolLinkMappings": {
+    "@ucam-eo/tessera": {
+      "TesseraTileRenderer": "https://www.npmjs.com/package/@ucam-eo/tessera"
+    }
+  }
+}

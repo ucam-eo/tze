@@ -3,6 +3,7 @@
 export { TesseraSource } from './tessera-source.js';
 export { SourceManager } from './source-manager.js';
 export { EventEmitter } from './event-emitter.js';
+export type { EventCallback } from './event-emitter.js';
 export { UtmProjection } from './projection.js';
 export { TesseraTileRenderer } from './tile-renderer.js';
 
