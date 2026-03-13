@@ -1,5 +1,7 @@
 // @ucam-eo/tessera — core TESSERA embedding access library
 
+export { EventEmitter } from './event-emitter.js';
+
 export type {
   TesseraOptions,
   StoreMetadata,
