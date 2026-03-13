@@ -1,7 +1,7 @@
 // Display-specific types for the MapLibre plugin.
 // Data types (StoreMetadata, EmbeddingRegion, etc.) come from @ucam-eo/tessera.
 
-export type PreviewMode = 'rgb' | 'pca' | 'bands';
+export type PreviewMode = 'rgb' | 'bands';
 
 export interface MaplibreDisplayOptions {
   bands?: [number, number, number];

@@ -24,9 +24,6 @@ export interface ZarrStore {
   /** Pre-rendered RGB preview array, if present. */
   rgbArr: zarr.Array<zarr.DataType> | null;
 
-  /** PCA-projected RGB preview array, if present. */
-  pcaArr: zarr.Array<zarr.DataType> | null;
-
   /**
    * Set of existing chunk keys (e.g. `"3_7"`), loaded from
    * `_chunk_manifest.json` if available. Used to skip 404s for
@@ -67,19 +64,12 @@ export async function openStore(url: string): Promise<ZarrStore> {
 
   // Try optional preview arrays
   let rgbArr: zarr.Array<zarr.DataType> | null = null;
-  let pcaArr: zarr.Array<zarr.DataType> | null = null;
   let hasRgb = false;
-  let hasPca = false;
 
   try {
     rgbArr = await zarr.open(rootLoc.resolve('rgb'), { kind: 'array' });
     hasRgb = true;
   } catch { /* no rgb preview */ }
-
-  try {
-    pcaArr = await zarr.open(rootLoc.resolve('pca_rgb'), { kind: 'array' });
-    hasPca = true;
-  } catch { /* no pca preview */ }
 
   // Try chunk manifest
   let chunkManifest: Set<string> | null = null;
@@ -93,14 +83,10 @@ export async function openStore(url: string): Promise<ZarrStore> {
         );
       }
       if (data?.has_rgb !== undefined) hasRgb = data.has_rgb;
-      if (data?.has_pca_rgb !== undefined) hasPca = data.has_pca_rgb;
 
-      // Re-open arrays if manifest says they exist but we didn't find them
+      // Re-open rgb array if manifest says it exists but we didn't find it
       if (hasRgb && !rgbArr) {
         try { rgbArr = await zarr.open(rootLoc.resolve('rgb'), { kind: 'array' }); } catch { hasRgb = false; }
-      }
-      if (hasPca && !pcaArr) {
-        try { pcaArr = await zarr.open(rootLoc.resolve('pca_rgb'), { kind: 'array' }); } catch { hasPca = false; }
       }
     }
   } catch { /* no manifest */ }
@@ -114,11 +100,9 @@ export async function openStore(url: string): Promise<ZarrStore> {
     chunkShape: embArr.chunks as [number, number, number],
     nBands: (embArr.shape[2] as number) || 128,
     hasRgb,
-    hasPca,
-    pcaExplainedVariance: attrs.pca_explained_variance as number[] | undefined,
   };
 
-  return { meta, embArr, scalesArr, rgbArr, pcaArr, chunkManifest };
+  return { meta, embArr, scalesArr, rgbArr, chunkManifest };
 }
 
 /**

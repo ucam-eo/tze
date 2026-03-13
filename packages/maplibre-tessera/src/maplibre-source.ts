@@ -67,7 +67,7 @@ export class MaplibreTesseraSource {
     // TODO: propagate to live map layers once display logic is extracted
   }
 
-  /** Switch the preview rendering mode (rgb | pca | bands). */
+  /** Switch the preview rendering mode (rgb | bands). */
   setPreview(mode: PreviewMode): void {
     this.displayOpts.preview = mode;
     // TODO: propagate to live map layers once display logic is extracted

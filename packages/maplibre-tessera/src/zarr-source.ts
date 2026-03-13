@@ -1602,8 +1602,7 @@ export class ZarrTesseraSource {
 
     // Determine preview mode
     const usePreview =
-      (this.opts.preview === 'pca' && this.store.meta.hasPca) ||
-      (this.opts.preview === 'rgb' && this.store.meta.hasRgb);
+      this.opts.preview === 'rgb' && this.store.meta.hasRgb;
 
     this.emit('loading', { total: toLoad.length, done: 0 });
     let done = 0;
@@ -1645,8 +1644,7 @@ export class ZarrTesseraSource {
       let result: Record<string, unknown>;
 
       if (usePreview && !this.regionHasTile(ci, cj)) {
-        const previewArr = this.opts.preview === 'pca'
-          ? this.store!.pcaArr! : this.store!.rgbArr!;
+        const previewArr = this.store!.rgbArr!;
         const rgbView = await fetchRegion(previewArr, [[r0, r1], [c0, c1], null]);
         if (signal.aborted) return;
         const rgbData = new Uint8Array(
@@ -1721,7 +1719,7 @@ export class ZarrTesseraSource {
 
     this.removePreviewLayer();
 
-    const variable = this.opts.preview === 'pca' ? 'pca_rgb' : 'rgb';
+    const variable = 'rgb';
     const sourceId = 'zarr-global-preview-src';
     const layerId = 'zarr-global-preview-lyr';
 

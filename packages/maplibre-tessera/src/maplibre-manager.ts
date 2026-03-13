@@ -101,7 +101,7 @@ export class MaplibreTesseraManager {
     for (const ds of this.displaySources.values()) ds.setBands(bands);
   }
 
-  /** Switch the preview rendering mode (rgb | pca | bands) across all zones. */
+  /** Switch the preview rendering mode (rgb | bands) across all zones. */
   setPreview(mode: PreviewMode): void {
     this.displayOpts.preview = mode;
     for (const ds of this.displaySources.values()) ds.setPreview(mode);

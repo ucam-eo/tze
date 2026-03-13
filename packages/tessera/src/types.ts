@@ -50,15 +50,6 @@ export interface StoreMetadata {
 
   /** Whether the store contains a pre-rendered RGB preview array. */
   hasRgb: boolean;
-
-  /** Whether the store contains a PCA-projected RGB preview array. */
-  hasPca: boolean;
-
-  /**
-   * Explained variance per PCA component, if available.
-   * Used for labelling PCA band selectors.
-   */
-  pcaExplainedVariance?: number[];
 }
 
 /**

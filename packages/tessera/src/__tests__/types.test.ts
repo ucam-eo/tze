@@ -17,7 +17,6 @@ describe('types', () => {
       chunkShape: [4, 4, 128],
       nBands: 128,
       hasRgb: true,
-      hasPca: false,
     };
     expect(meta.transform).toHaveLength(6);
     expect(meta.shape).toHaveLength(3);
