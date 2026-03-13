@@ -1,4 +1,5 @@
-type EventCallback<T> = (data: T) => void;
+/** Callback type for event listeners. */
+export type EventCallback<T> = (data: T) => void;
 
 /**
  * Minimal typed event emitter.
@@ -30,7 +31,7 @@ export class EventEmitter<T extends { [K in keyof T]: unknown }> {
   }
 
   /** Emit an event to all subscribers. */
-  protected emit<K extends keyof T & string>(
+  emit<K extends keyof T & string>(
     event: K,
     data: T[K],
   ): void {
