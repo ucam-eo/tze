@@ -32,6 +32,15 @@ export const roiTileCount = derived(roiRegions, ($regions) => {
 
 let nextId = 0;
 
+const LARGE_REGION_THRESHOLD = 1000;
+
+let _confirmLargeRegion: ((count: number) => Promise<boolean>) | null = null;
+
+/** Register a callback that confirms large region loads. Returns true to proceed. */
+export function setConfirmLargeRegion(fn: (count: number) => Promise<boolean>) {
+  _confirmLargeRegion = fn;
+}
+
 /** Called when terra-draw finishes a shape. Starts loading chunks for the region. */
 export async function addRegion(feature: GeoJSON.Feature): Promise<void> {
   const sm = get(sourceManager);
@@ -40,6 +49,11 @@ export async function addRegion(feature: GeoJSON.Feature): Promise<void> {
 
   const geometry = feature.geometry as GeoJSON.Polygon;
   const managedChunks = await sm.getChunksInRegion(geometry);
+
+  if (managedChunks.length > LARGE_REGION_THRESHOLD && _confirmLargeRegion) {
+    const proceed = await _confirmLargeRegion(managedChunks.length);
+    if (!proceed) return;
+  }
 
   const region: RoiRegion = {
     id: `roi-${nextId++}`,

@@ -27,7 +27,8 @@
   import { registerAllTutorials } from './lib/tutorials/index';
   import { TerraDraw, TerraDrawPolygonMode, TerraDrawRectangleMode } from 'terra-draw';
   import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
-  import { drawMode, roiDrawing, roiRegions, addRegion } from './stores/drawing';
+  import { drawMode, roiDrawing, roiRegions, addRegion, setConfirmLargeRegion } from './stores/drawing';
+  import ConfirmModal from './components/ConfirmModal.svelte';
 
   let mapContainer: HTMLDivElement;
   let similarityRef: SimilaritySearch | undefined = $state();
@@ -36,6 +37,19 @@
   let osmModalOpen = $state(false);
   let osmAutoImport = $state(false);
   let sidebarOpen = $state(false);
+
+  // Large region confirmation modal state
+  let largeRegionOpen = $state(false);
+  let largeRegionCount = $state(0);
+  let largeRegionResolve: ((proceed: boolean) => void) | null = null;
+
+  setConfirmLargeRegion((count: number) => {
+    largeRegionCount = count;
+    largeRegionOpen = true;
+    return new Promise<boolean>((resolve) => {
+      largeRegionResolve = resolve;
+    });
+  });
 
   const BASEMAP_TILES: Record<string, { tiles: string[]; attribution: string }> = {
     satellite: { tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], attribution: 'Esri, Maxar' },
@@ -446,11 +460,11 @@
     if ($roiDrawing) {
       canvas.style.cursor = 'crosshair';
     } else if ($activeTool === 'similarity') {
-      canvas.style.cursor = 'crosshair';
+      canvas.style.cursor = 'cell';
     } else if ($activeTool === 'classifier' && $activeClass) {
-      canvas.style.cursor = 'crosshair';
+      canvas.style.cursor = 'cell';
     } else {
-      canvas.style.cursor = '';
+      canvas.style.cursor = 'grab';
     }
   });
 
@@ -545,6 +559,17 @@
 
 <!-- Top bar -->
 <TopBar onOpenCatalog={() => { catalogModalOpen = true; }} />
+
+<!-- Large region confirmation modal -->
+<ConfirmModal
+  bind:open={largeRegionOpen}
+  title="Large Region"
+  message="This region contains {largeRegionCount.toLocaleString()} chunks. Loading may take significant time and bandwidth."
+  detail="Consider drawing a smaller region, or continue if you have a fast connection."
+  confirmLabel="Load {largeRegionCount.toLocaleString()} chunks"
+  onconfirm={() => { largeRegionOpen = false; largeRegionResolve?.(true); largeRegionResolve = null; }}
+  oncancel={() => { largeRegionOpen = false; largeRegionResolve?.(false); largeRegionResolve = null; }}
+/>
 
 <!-- Catalog modal -->
 <CatalogModal bind:open={catalogModalOpen} />
