@@ -68,8 +68,8 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
 
       zones.push({
         id: item.id as string,
-        utmZone: (props.utm_zone as number) ?? 0,
-        epsg: props['proj:code'] ? parseInt((props['proj:code'] as string).split(':')[1], 10) : ((props.crs_epsg as number) ?? 0),
+        utmZone: props['tessera:utm_zone'] as number,
+        epsg: parseInt((props['proj:code'] as string).split(':')[1], 10),
         bbox: item.bbox as [number, number, number, number],
         geometry: (item.geometry as GeoJSON.Polygon),
         zarrUrl,

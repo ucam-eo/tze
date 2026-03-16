@@ -53,13 +53,13 @@ export async function openStore(url: string): Promise<ZarrStore> {
   const embArr = await zarr.open(rootLoc.resolve('embeddings'), { kind: 'array' });
   const scalesArr = await zarr.open(rootLoc.resolve('scales'), { kind: 'array' });
 
-  const utmZone = attrs.utm_zone as number;
-  const projCode = attrs['proj:code'] as string | undefined;
-  const epsg = projCode ? parseInt(projCode.split(':')[1], 10) : (attrs.crs_epsg as number);
-  const transform = (attrs['spatial:transform'] ?? attrs.transform) as [number, number, number, number, number, number];
+  const utmZone = attrs['tessera:utm_zone'] as number;
+  const projCode = attrs['proj:code'] as string;
+  const epsg = parseInt(projCode.split(':')[1], 10);
+  const transform = attrs['spatial:transform'] as [number, number, number, number, number, number];
 
   if (!utmZone || !transform || !embArr.shape) {
-    throw new Error('Missing required store metadata (utm_zone, spatial:transform, shape)');
+    throw new Error('Missing required store metadata (tessera:utm_zone, spatial:transform, shape)');
   }
 
   // Try optional preview arrays
