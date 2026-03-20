@@ -85,8 +85,9 @@ export const segmentationTutorial: TutorialDef = {
         const center = ctx.manager.getChunkAtLngLat(0.30, 52.27);
         if (!center) return;
 
-        // Build a rectangle polygon covering a 91×91 grid centered on the target
-        const buf = 45;
+        // Build a rectangle polygon covering a small grid centered on the target
+        // (buf=5 gives an 11×11 grid — manageable for v2's larger 32×32 chunks)
+        const buf = 5;
         const tlCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci - buf, center.cj - buf);
         const brCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci + buf, center.cj + buf);
         if (!tlCorners || !brCorners) return;
