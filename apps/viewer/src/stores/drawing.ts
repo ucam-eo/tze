@@ -1,6 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { sourceManager, displayManager } from './zarr';
 import { simEmbeddingTileCount } from './similarity';
+import { activeTutorial } from './tutorial';
 
 export type DrawMode = 'polygon' | 'rectangle';
 export type RoiRegion = {
@@ -51,7 +52,8 @@ export async function addRegion(feature: GeoJSON.Feature): Promise<boolean> {
   const geometry = feature.geometry as GeoJSON.Polygon;
   const managedChunks = await sm.getChunksInRegion(geometry);
 
-  if (managedChunks.length > LARGE_REGION_THRESHOLD && _confirmLargeRegion) {
+  const isTutorial = !!get(activeTutorial);
+  if (!isTutorial && managedChunks.length > LARGE_REGION_THRESHOLD && _confirmLargeRegion) {
     const proceed = await _confirmLargeRegion(managedChunks.length);
     if (!proceed) return false;
   }
