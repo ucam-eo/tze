@@ -85,10 +85,12 @@ export const segmentationTutorial: TutorialDef = {
         const center = ctx.manager.getChunkAtLngLat(0.30, 52.27);
         if (!center) return;
 
-        // Build a rectangle polygon covering a 33×33 grid centered on the target
-        const buf = 16;
-        const tlCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci - buf, center.cj - buf);
-        const brCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci + buf, center.cj + buf);
+        // Build a rectangle polygon covering a ~22×22 grid, shifted east
+        // by 10 chunks to centre on solar panel installations
+        const buf = 11;
+        const cjShift = 10;
+        const tlCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci - buf, center.cj - buf + cjShift);
+        const brCorners = ctx.manager.getChunkBoundsLngLat(center.zoneId, center.ci + buf, center.cj + buf + cjShift);
         if (!tlCorners || !brCorners) return;
 
         const west = tlCorners[0][0], north = tlCorners[0][1];
