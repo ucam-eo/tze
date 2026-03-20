@@ -105,13 +105,14 @@ export const segmentationTutorial: TutorialDef = {
           },
         };
 
-        // Zoom partway in so the region is visible during download
-        ctx.map.fitBounds([[west, south], [east, north]], { padding: 300, duration: 1200 });
+        // Zoom out to show the full region, then pause to let map tiles settle
+        ctx.map.fitBounds([[west, south], [east, north]], { padding: 120, duration: 1200 });
+        await new Promise((r) => setTimeout(r, 2000));
 
         await addRegion(feature);
 
         // Zoom in closer once loading is complete
-        ctx.map.fitBounds([[west, south], [east, north]], { padding: 80, duration: 1500 });
+        ctx.map.fitBounds([[west, south], [east, north]], { padding: 60, duration: 1500 });
       },
       trigger: { kind: 'action-complete' },
     },
