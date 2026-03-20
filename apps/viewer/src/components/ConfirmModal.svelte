@@ -23,7 +23,7 @@
 </script>
 
 {#if open}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
     <div class="bg-gray-950 border border-gray-700/80 rounded-lg shadow-2xl w-[380px] p-5 space-y-4">
       <div class="flex items-start gap-3">
         <div class="shrink-0 mt-0.5 text-amber-400">
