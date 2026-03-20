@@ -547,6 +547,26 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     this._embeddingRegion = null;
   }
 
+  /**
+   * Switch to a different time index (v2 stores only).
+   * Clears all loaded embeddings and forces a reload.
+   */
+  setTimeIndex(timeIndex: number): void {
+    if (!this.store || this.store.meta.version !== 'v2') return;
+    this.store.meta.timeIndex = timeIndex;
+    this.clearRegion();
+  }
+
+  /**
+   * Set the active year (v2 stores only).
+   * Resolves the year to a time index and clears loaded data.
+   */
+  setYear(year: number): void {
+    if (!this.store || this.store.meta.version !== 'v2') return;
+    const idx = this.store.meta.years?.indexOf(year) ?? -1;
+    if (idx >= 0) this.setTimeIndex(idx);
+  }
+
   // ---------------------------------------------------------------------------
   // Internal: store access (for framework wrappers)
   // ---------------------------------------------------------------------------
@@ -604,10 +624,25 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     // Check for abort before starting the fetch
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-    const [embView, scalesView] = await Promise.all([
-      fetchRegion(this.store.embArr, [[r0, r1], [c0, c1], null], { onProgress }),
-      fetchRegion(this.store.scalesArr, [[r0, r1], [c0, c1]]),
-    ]);
+    const isV2 = this.store.meta.version === 'v2';
+    const t = this.store.meta.timeIndex ?? 0;
+
+    let embView: { data: ArrayBufferView; shape: number[] };
+    let scalesView: { data: ArrayBufferView; shape: number[] };
+
+    if (isV2) {
+      // v2 NCHW: embeddings[t, :, r0:r1, c0:c1], scales[t, r0:r1, c0:c1]
+      [embView, scalesView] = await Promise.all([
+        fetchRegion(this.store.embArr, [[t, t + 1], null, [r0, r1], [c0, c1]], { onProgress }),
+        fetchRegion(this.store.scalesArr, [[t, t + 1], [r0, r1], [c0, c1]]),
+      ]);
+    } else {
+      // v1 HWB: embeddings[r0:r1, c0:c1, :], scales[r0:r1, c0:c1]
+      [embView, scalesView] = await Promise.all([
+        fetchRegion(this.store.embArr, [[r0, r1], [c0, c1], null], { onProgress }),
+        fetchRegion(this.store.scalesArr, [[r0, r1], [c0, c1]]),
+      ]);
+    }
 
     // Check for abort after fetch
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -631,14 +666,37 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
       const tIdx = (ci - region.ciMin) * region.gridCols + (cj - region.cjMin);
       const pixBase = tIdx * region.tileW * region.tileH;
       const embBase = pixBase * nBands;
-      for (let i = 0; i < h * w; i++) {
-        const s = scalesF32[i];
-        const valid = s && !isNaN(s) && isFinite(s);
-        const dst = embBase + i * nBands;
-        if (valid) {
-          for (let b = 0; b < nBands; b++) region.emb[dst + b] = embInt8[i * nBands + b] * s;
-        } else {
-          for (let b = 0; b < nBands; b++) region.emb[dst + b] = NaN;
+
+      if (isV2) {
+        // v2 NCHW: embInt8 is [1, B, h, w] — band-first layout
+        // Dequantise with transpose: read band-first, write pixel-first
+        for (let row = 0; row < h; row++) {
+          for (let col = 0; col < w; col++) {
+            const pixIdx = row * w + col;
+            const s = scalesF32[pixIdx];
+            const valid = s && !isNaN(s) && isFinite(s);
+            const dst = embBase + pixIdx * nBands;
+            if (valid) {
+              for (let b = 0; b < nBands; b++) {
+                // NCHW: offset = b * h * w + row * w + col
+                region.emb[dst + b] = embInt8[b * h * w + pixIdx] * s;
+              }
+            } else {
+              for (let b = 0; b < nBands; b++) region.emb[dst + b] = NaN;
+            }
+          }
+        }
+      } else {
+        // v1 HWB: embInt8 is [h, w, B] — pixel-first layout
+        for (let i = 0; i < h * w; i++) {
+          const s = scalesF32[i];
+          const valid = s && !isNaN(s) && isFinite(s);
+          const dst = embBase + i * nBands;
+          if (valid) {
+            for (let b = 0; b < nBands; b++) region.emb[dst + b] = embInt8[i * nBands + b] * s;
+          } else {
+            for (let b = 0; b < nBands; b++) region.emb[dst + b] = NaN;
+          }
         }
       }
       region.loaded[tIdx] = 1;

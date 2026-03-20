@@ -15,10 +15,10 @@ export interface ZarrStore {
   /** Parsed store metadata. */
   meta: StoreMetadata;
 
-  /** The main embeddings array (int8, shape `[H, W, nBands]`). */
+  /** The main embeddings array. v1: `[H, W, B]`, v2: `[T, B, H, W]`. */
   embArr: zarr.Array<zarr.DataType>;
 
-  /** Per-pixel dequantisation scales (float32, shape `[H, W]`). */
+  /** Per-pixel dequantisation scales. v1: `[H, W]`, v2: `[T, H, W]`. */
   scalesArr: zarr.Array<zarr.DataType>;
 
   /** Pre-rendered RGB preview array, if present. */
@@ -62,6 +62,10 @@ export async function openStore(url: string): Promise<ZarrStore> {
     throw new Error('Missing required store metadata (tessera:utm_zone, spatial:transform, shape)');
   }
 
+  // Detect v1 vs v2 from dataset_version or array dimensionality
+  const datasetVersion = attrs['tessera:dataset_version'] as string | undefined;
+  const isV2 = datasetVersion === 'v2' || embArr.shape.length === 4;
+
   // Try optional preview arrays
   let rgbArr: zarr.Array<zarr.DataType> | null = null;
   let hasRgb = false;
@@ -91,16 +95,41 @@ export async function openStore(url: string): Promise<ZarrStore> {
     }
   } catch { /* no manifest */ }
 
-  const meta: StoreMetadata = {
-    url,
-    utmZone,
-    epsg,
-    transform,
-    shape: embArr.shape as [number, number, number],
-    chunkShape: embArr.chunks as [number, number, number],
-    nBands: (embArr.shape[2] as number) || 128,
-    hasRgb,
-  };
+  let meta: StoreMetadata;
+
+  if (isV2) {
+    // v2: NCHW layout — embArr.shape is [T, B, H, W]
+    const [_T, nBands, H, W] = embArr.shape as [number, number, number, number];
+    const chunks = embArr.chunks as [number, number, number, number];
+    const years = (attrs['tessera:years'] as number[]) ?? [];
+
+    meta = {
+      url,
+      utmZone,
+      epsg,
+      transform,
+      shape: [H, W, nBands],
+      chunkShape: [chunks[2], chunks[3], chunks[1]],
+      nBands,
+      hasRgb,
+      version: 'v2',
+      years,
+      timeIndex: years.length > 0 ? years.length - 1 : 0, // default to latest year
+    };
+  } else {
+    // v1: HWB layout — embArr.shape is [H, W, B]
+    meta = {
+      url,
+      utmZone,
+      epsg,
+      transform,
+      shape: embArr.shape as [number, number, number],
+      chunkShape: embArr.chunks as [number, number, number],
+      nBands: (embArr.shape[2] as number) || 128,
+      hasRgb,
+      version: 'v1',
+    };
+  }
 
   return { meta, embArr, scalesArr, rgbArr, chunkManifest };
 }

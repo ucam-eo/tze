@@ -39,10 +39,10 @@ export interface StoreMetadata {
    */
   transform: [number, number, number, number, number, number];
 
-  /** Array shape `[height, width, nBands]`. */
+  /** Spatial array shape `[height, width]` (spatial dims only). */
   shape: [number, number, number];
 
-  /** Chunk shape `[tileH, tileW, nBands]`. */
+  /** Spatial chunk shape `[tileH, tileW, nBands]`. */
   chunkShape: [number, number, number];
 
   /** Number of embedding dimensions (typically 128). */
@@ -50,6 +50,15 @@ export interface StoreMetadata {
 
   /** Whether the store contains a pre-rendered RGB preview array. */
   hasRgb: boolean;
+
+  /** Dataset version: 'v1' (HWB layout) or 'v2' (NCHW layout with time). */
+  version: 'v1' | 'v2';
+
+  /** Available years (v2 only). */
+  years?: number[];
+
+  /** Active time index into the years array (v2 only, 0-based). */
+  timeIndex?: number;
 }
 
 /**

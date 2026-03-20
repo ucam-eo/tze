@@ -127,6 +127,117 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
   return { zones, availableYears: years, globalPreviewUrls, globalPreviewUrl, globalBounds };
 }
 
+/**
+ * Load a v2 tessera store directly (no STAC catalog).
+ * Discovers zones from consolidated metadata in the root zarr.json.
+ */
+export async function loadV2Store(storeUrl: string, signal?: AbortSignal): Promise<CatalogResult> {
+  const resolvedUrl = new URL(storeUrl, window.location.href).href;
+  const rootUrl = resolvedUrl.endsWith('/') ? resolvedUrl : resolvedUrl + '/';
+
+  // Fetch root zarr.json (includes consolidated metadata)
+  const rootMeta = await fetchJson(`${rootUrl}zarr.json`, signal) as Record<string, unknown>;
+  const rootAttrs = (rootMeta.attributes ?? {}) as Record<string, unknown>;
+
+  const datasetVersion = rootAttrs['tessera:dataset_version'] as string;
+  if (datasetVersion !== 'v2') {
+    throw new Error(`Expected tessera:dataset_version="v2", got "${datasetVersion}"`);
+  }
+
+  const years = (rootAttrs['tessera:years'] as number[]) ?? [];
+
+  // Extract zones from consolidated metadata
+  const consolidated = (rootMeta as Record<string, unknown>).consolidated_metadata as {
+    metadata?: Record<string, Record<string, unknown>>
+  } | undefined;
+
+  const zones: ZoneDescriptor[] = [];
+  const zonePattern = /^utm(\d{2})$/;
+
+  if (consolidated?.metadata) {
+    for (const [name, groupMeta] of Object.entries(consolidated.metadata)) {
+      const m = zonePattern.exec(name);
+      if (!m) continue;
+
+      const attrs = (groupMeta.attributes ?? {}) as Record<string, unknown>;
+      const utmZone = attrs['tessera:utm_zone'] as number;
+      const projCode = attrs['proj:code'] as string;
+      if (!utmZone || !projCode) continue;
+
+      const epsg = parseInt(projCode.split(':')[1], 10);
+      const transform = attrs['spatial:transform'] as number[];
+      const shape = attrs['spatial:shape'] as number[];
+      if (!transform || !shape) continue;
+
+      // Compute WGS84 bbox from UTM extent
+      const originE = transform[2];
+      const originN = transform[5];
+      const pixelSize = transform[0];
+      const [H, W] = shape;
+      const westLon = (utmZone - 1) * 6 - 180;
+      const eastLon = utmZone * 6 - 180;
+      // Approximate lat bounds from northing
+      const maxN = originN;
+      const minN = originN - H * pixelSize;
+      const approxLatN = Math.min(84, maxN / 111320);
+      const approxLatS = Math.max(-80, minN / 111320);
+
+      zones.push({
+        id: name,
+        utmZone,
+        epsg,
+        bbox: [westLon, approxLatS, eastLon, approxLatN],
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[
+            [westLon, approxLatS],
+            [eastLon, approxLatS],
+            [eastLon, approxLatN],
+            [westLon, approxLatN],
+            [westLon, approxLatS],
+          ]],
+        },
+        zarrUrl: `${rootUrl}${name}`,
+      });
+    }
+  }
+
+  zones.sort((a, b) => a.utmZone - b.utmZone);
+
+  // Check for global preview
+  let globalPreviewUrl: string | null = null;
+  const globalPreviewUrls: Record<string, string> = {};
+  let globalBounds: [number, number, number, number] | null = null;
+
+  try {
+    const gpUrl = `${rootUrl}global_rgb`;
+    const resp = await fetch(`${gpUrl}/zarr.json`, { signal });
+    if (resp.ok) {
+      globalPreviewUrl = gpUrl;
+      const latestYear = years[years.length - 1];
+      if (latestYear) globalPreviewUrls[String(latestYear)] = gpUrl;
+      globalBounds = [-180, -90, 180, 90];
+    }
+  } catch { /* no global preview */ }
+
+  if (!globalBounds && zones.length > 0) {
+    globalBounds = [
+      Math.min(...zones.map(z => z.bbox[0])),
+      Math.min(...zones.map(z => z.bbox[1])),
+      Math.max(...zones.map(z => z.bbox[2])),
+      Math.max(...zones.map(z => z.bbox[3])),
+    ];
+  }
+
+  return {
+    zones,
+    availableYears: years.map(String),
+    globalPreviewUrls,
+    globalPreviewUrl,
+    globalBounds,
+  };
+}
+
 /** Simple point-in-bbox test (WGS84). */
 export function pointInBbox(lng: number, lat: number, bbox: [number, number, number, number]): boolean {
   const [w, s, e, n] = bbox;
