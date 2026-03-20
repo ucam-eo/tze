@@ -10,7 +10,7 @@ import { simSelectedPixel, simScores, simRefEmbedding } from './similarity';
 import { labels, isClassified } from './classifier';
 import { segmentPolygons } from './segmentation';
 
-export const catalogUrl = writable('https://dl2.geotessera.org/zarr/v1/catalog.json');
+export const catalogUrl = writable('https://dl2.geotessera.org/zarr/v2/store.zarr');
 export const catalogStatus = writable<'idle' | 'loading' | 'loaded' | 'error'>('idle');
 export const catalogError = writable<string>('');
 
@@ -26,10 +26,14 @@ export const activeYear = writable<string>('');
 /** Per-year global preview URLs */
 export const globalPreviewUrls = writable<Record<string, string>>({});
 
-/** Zones filtered to the active year */
+/** Whether we're using a v2 store (single store, time dimension). */
+export const isV2Store = writable(false);
+
+/** Zones filtered to the active year (v1) or all zones (v2). */
 export const zones = derived(
-  [allZones, activeYear],
-  ([$allZones, $activeYear]) =>
+  [allZones, activeYear, isV2Store],
+  ([$allZones, $activeYear, $isV2]) =>
+    $isV2 ? $allZones :
     $activeYear ? $allZones.filter(z => z.id.endsWith(`_${$activeYear}`)) : $allZones
 );
 

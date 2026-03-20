@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadCatalog, pointInBbox } from '../lib/stac';
+  import { loadCatalog, loadV2Store, pointInBbox } from '../lib/stac';
   import {
     catalogUrl, zones, allZones, availableYears, activeYear,
     globalPreviewUrls as globalPreviewUrlsStore,
-    catalogStatus, catalogError, initManager,
+    catalogStatus, catalogError, initManager, isV2Store,
   } from '../stores/stac';
   import { mapInstance } from '../stores/map';
   import { status, globalPreviewUrl, globalPreviewBounds } from '../stores/zarr';
@@ -59,7 +59,9 @@
     $status = 'Loading catalog...';
 
     try {
-      const result = await loadCatalog(url);
+      const isV2 = /\.zarr\/?$/.test(url);
+      $isV2Store = isV2;
+      const result = isV2 ? await loadV2Store(url) : await loadCatalog(url);
       $allZones = result.zones;
       $availableYears = result.availableYears;
       $globalPreviewUrlsStore = result.globalPreviewUrls;
