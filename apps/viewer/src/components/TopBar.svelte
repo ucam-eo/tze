@@ -10,6 +10,7 @@
   import { roiDrawing, drawMode, roiRegions, roiLoading, roiTileCount, clearAllRegions, removeRegion, addRegion, type DrawMode } from '../stores/drawing';
   import { activeTool, type ToolId } from '../stores/tools';
   import { simSelectedPixel } from '../stores/similarity';
+  import { displayManager } from '../stores/zarr';
   import { activeClass } from '../stores/classifier';
   import TutorialDropdown from './TutorialDropdown.svelte';
 
@@ -317,7 +318,10 @@
   <div class="flex items-center gap-0.5" data-tutorial="tool-switcher">
     {#each tools as tool}
       <button
-        onclick={() => { $activeTool = tool.id; }}
+        onclick={() => {
+          if (tool.id !== 'similarity') $displayManager?.clearSimilarityOverlay();
+          $activeTool = tool.id;
+        }}
         class="flex items-center gap-1 px-1.5 h-6 rounded text-[10px]
                border transition-all
                {$activeTool === tool.id
