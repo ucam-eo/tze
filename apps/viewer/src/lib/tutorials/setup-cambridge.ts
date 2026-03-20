@@ -66,7 +66,7 @@ export const cambridgeSetupSteps: TutorialStep[] = [
       // Zoom partway in so the region is visible during download
       ctx.map.fitBounds([[west, south], [east, north]], { padding: 300, duration: 1200 });
 
-      await addRegion(feature);
+      await addRegion(feature, { skipConfirm: true });
 
       // Zoom in closer once loading is complete
       ctx.map.fitBounds([[west, south], [east, north]], { padding: 80, duration: 1500 });

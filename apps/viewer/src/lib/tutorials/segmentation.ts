@@ -109,7 +109,7 @@ export const segmentationTutorial: TutorialDef = {
         ctx.map.fitBounds([[west, south], [east, north]], { padding: 120, duration: 1200 });
         await new Promise((r) => setTimeout(r, 2000));
 
-        await addRegion(feature);
+        await addRegion(feature, { skipConfirm: true });
 
         // Zoom in closer once loading is complete
         ctx.map.fitBounds([[west, south], [east, north]], { padding: 60, duration: 1500 });

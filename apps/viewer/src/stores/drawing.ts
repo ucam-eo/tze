@@ -1,7 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import { sourceManager, displayManager } from './zarr';
 import { simEmbeddingTileCount } from './similarity';
-import { activeTutorial } from './tutorial';
 
 export type DrawMode = 'polygon' | 'rectangle';
 export type RoiRegion = {
@@ -43,8 +42,9 @@ export function setConfirmLargeRegion(fn: (count: number) => Promise<boolean>) {
 }
 
 /** Called when terra-draw finishes a shape. Starts loading chunks for the region.
- *  Returns false if the user cancelled (e.g. large region confirmation). */
-export async function addRegion(feature: GeoJSON.Feature): Promise<boolean> {
+ *  Returns false if the user cancelled (e.g. large region confirmation).
+ *  Pass skipConfirm=true to bypass the large-region modal (used by tutorials). */
+export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false } = {}): Promise<boolean> {
   const sm = get(sourceManager);
   const dm = get(displayManager);
   if (!sm) return;
@@ -52,8 +52,7 @@ export async function addRegion(feature: GeoJSON.Feature): Promise<boolean> {
   const geometry = feature.geometry as GeoJSON.Polygon;
   const managedChunks = await sm.getChunksInRegion(geometry);
 
-  const isTutorial = !!get(activeTutorial);
-  if (!isTutorial && managedChunks.length > LARGE_REGION_THRESHOLD && _confirmLargeRegion) {
+  if (!skipConfirm && managedChunks.length > LARGE_REGION_THRESHOLD && _confirmLargeRegion) {
     const proceed = await _confirmLargeRegion(managedChunks.length);
     if (!proceed) return false;
   }
