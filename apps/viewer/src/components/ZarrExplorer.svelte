@@ -1,0 +1,260 @@
+<script lang="ts">
+  import { untrack } from 'svelte';
+  import { sourceManager } from '../stores/zarr';
+  import { zones } from '../stores/stac';
+  import { explorerGrid, explorerVisible, explorerHover, YEAR_COLORS } from '../stores/zarr-explorer';
+  import { mapInstance } from '../stores/map';
+  import { get } from 'svelte/store';
+  import type { Feature } from 'geojson';
+
+  let featureCount = $state(0);
+  let overflow = $state(false);
+  let gridError = $state<string | null>(null);
+
+  const MAX_FEATURES = 3000;
+
+  // Generation counter to discard stale async results
+  let gen = 0;
+
+  // Per-year probe results for the selected shard
+  // year → 'pending' | 'found' | 'missing'
+  let probeResults = $state<Map<number, 'pending' | 'found' | 'missing'>>(new Map());
+  let probeGen = 0;
+
+  /** Probe year data for the selected shard using zarrita (handles sharding automatically). */
+  async function probeSelectedShard(zoneId: string, ci: number, cj: number) {
+    const myProbeGen = ++probeGen;
+    const mgr = get(sourceManager);
+    if (!mgr) return;
+
+    // Ensure source is open
+    let src = mgr.getOpenSource(zoneId);
+    if (!src) {
+      try { src = await mgr.getSource(zoneId); } catch { return; }
+    }
+    const meta = src.metadata;
+    if (!meta || !meta.years || meta.years.length === 0) return;
+
+    // Show all years as pending
+    const pending = new Map<number, 'pending' | 'found' | 'missing'>();
+    for (const year of meta.years) pending.set(year, 'pending');
+    probeResults = new Map(pending);
+
+    // Use zarrita via probeYearData — fetches a 1-pixel slice per year
+    if (myProbeGen !== probeGen) return;
+    const yearMap = await mgr.probeYearData(zoneId, ci, cj);
+    if (myProbeGen !== probeGen) return;
+
+    const results = new Map<number, 'pending' | 'found' | 'missing'>();
+    for (const [year, exists] of yearMap) {
+      results.set(year, exists ? 'found' : 'missing');
+    }
+    probeResults = results;
+  }
+
+  // When the selected shard changes, probe its years
+  $effect(() => {
+    const hover = $explorerHover;
+    if (hover) {
+      untrack(() => probeSelectedShard(hover.zoneId, hover.ci, hover.cj));
+    } else {
+      probeResults = new Map();
+      probeGen++;
+    }
+  });
+
+  /**
+   * Build grid for only the visible chunk range by converting viewport
+   * corners to each zone's UTM, computing the chunk index range, and
+   * iterating only that small window.
+   */
+  async function buildVisibleGrid() {
+    const myGen = ++gen;
+    const mgr = get(sourceManager);
+    const map = get(mapInstance);
+    if (!mgr || !map) return;
+
+    overflow = false;
+    gridError = null;
+
+    try {
+      const bounds = map.getBounds();
+      const vW = bounds.getWest(), vE = bounds.getEast();
+      const vS = bounds.getSouth(), vN = bounds.getNorth();
+      const allZones = get(zones);
+      const features: Feature[] = [];
+
+      for (const zone of allZones) {
+        if (myGen !== gen) return;
+
+        // Skip zones fully outside viewport
+        const [zW, zS, zE, zN] = zone.bbox;
+        if (zE < vW || zW > vE || zN < vS || zS > vN) continue;
+
+        // Only use already-open sources (no network requests on pan)
+        const src = mgr.getOpenSource(zone.id);
+        if (!src) continue;
+        const meta = src.metadata;
+        const proj = src.projection;
+        if (!meta || !proj) continue;
+
+        const [H, W] = meta.shape;
+        const [chunkH, chunkW] = meta.chunkShape;
+        const nRows = Math.ceil(H / chunkH);
+        const nCols = Math.ceil(W / chunkW);
+        const t = meta.transform; // [pixelW, 0, originX, 0, -pixelH, originY]
+        const px = t[0];
+        const originE = t[2];
+        const originN = t[5];
+
+        // Convert viewport corners to this zone's UTM
+        // Clamp to zone bbox to avoid projection distortion outside the zone
+        const clampLng = (v: number) => Math.max(zW, Math.min(zE, v));
+        const clampLat = (v: number) => Math.max(zS, Math.min(zN, v));
+        const corners = [
+          proj.forward(clampLng(vW), clampLat(vN)),
+          proj.forward(clampLng(vE), clampLat(vN)),
+          proj.forward(clampLng(vW), clampLat(vS)),
+          proj.forward(clampLng(vE), clampLat(vS)),
+        ];
+        const minE = Math.min(...corners.map(c => c[0]));
+        const maxE = Math.max(...corners.map(c => c[0]));
+        const minN = Math.min(...corners.map(c => c[1]));
+        const maxN = Math.max(...corners.map(c => c[1]));
+
+        // Convert UTM bounds to chunk index range
+        const cjMin = Math.max(0, Math.floor((minE - originE) / (chunkW * px)));
+        const cjMax = Math.min(nCols - 1, Math.floor((maxE - originE) / (chunkW * px)));
+        const ciMin = Math.max(0, Math.floor((originN - maxN) / (chunkH * px)));
+        const ciMax = Math.min(nRows - 1, Math.floor((originN - minN) / (chunkH * px)));
+
+        for (let ci = ciMin; ci <= ciMax; ci++) {
+          for (let cj = cjMin; cj <= cjMax; cj++) {
+            if (features.length >= MAX_FEATURES) { overflow = true; break; }
+
+            const corners = src.getChunkBoundsLngLat(ci, cj);
+            if (!corners) continue;
+
+            features.push({
+              type: 'Feature',
+              properties: { zone: zone.id, ci, cj, years: JSON.stringify(meta.years ?? []) },
+              geometry: {
+                type: 'Polygon',
+                coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
+              },
+            });
+          }
+          if (overflow) break;
+        }
+        if (overflow) break;
+      }
+
+      if (myGen !== gen) return;
+      featureCount = features.length;
+      explorerGrid.set({ type: 'FeatureCollection', features });
+      explorerVisible.set(true);
+    } catch (err) {
+      if (myGen === gen) {
+        gridError = err instanceof Error ? err.message : String(err);
+      }
+    }
+  }
+
+  // Rebuild visible grid on activation and on map move.
+  // Use untrack to avoid reading the stores we write (explorerGrid, explorerVisible).
+  $effect(() => {
+    const mgr = $sourceManager;
+    const map = $mapInstance;
+    if (!mgr || !map) return;
+
+    untrack(() => buildVisibleGrid());
+
+    const handler = () => buildVisibleGrid();
+    map.on('moveend', handler);
+    return () => {
+      map.off('moveend', handler);
+      explorerVisible.set(false);
+      explorerGrid.set({ type: 'FeatureCollection', features: [] });
+      explorerHover.set(null);
+    };
+  });
+
+  const selected = $derived($explorerHover);
+
+  const yearEntries = $derived(
+    Object.entries(YEAR_COLORS).map(([y, c]) => ({ year: Number(y), color: c }))
+  );
+</script>
+
+<div class="space-y-3" data-tutorial="explorer-panel">
+  <div class="text-[10px] text-gray-500">
+    Click a shard on the map to see its details.
+  </div>
+
+  {#if gridError}
+    <div class="text-[9px] text-red-400 break-all">{gridError}</div>
+  {/if}
+
+  {#if featureCount > 0}
+    <div class="text-[10px] text-gray-400">
+      <span class="text-gray-300 font-bold">{featureCount}</span> shard{featureCount !== 1 ? 's' : ''} in view
+    </div>
+  {/if}
+
+  {#if overflow}
+    <div class="text-[9px] text-yellow-500/80">Zoom in to see all shards</div>
+  {/if}
+
+  <!-- Selected shard info -->
+  {#if selected}
+    <div class="bg-gray-900/80 border border-term-cyan/30 rounded px-2.5 py-2 space-y-1.5">
+      <div class="text-[10px] text-gray-300 font-medium">
+        {selected.zoneId}
+        <span class="text-gray-500 font-normal">chunk [{selected.ci}, {selected.cj}]</span>
+      </div>
+      {#if probeResults.size > 0}
+        <div class="text-[9px] text-gray-500 uppercase tracking-wider">Years (verified)</div>
+        <div class="flex flex-wrap gap-1">
+          {#each [...probeResults.entries()] as [year, status]}
+            {@const color = YEAR_COLORS[year] ?? '#888'}
+            <span class="text-[9px] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                  style="background: {status === 'found' ? color + '22' : 'transparent'};
+                         color: {status === 'found' ? color : status === 'pending' ? '#666' : '#444'};
+                         {status === 'missing' ? 'text-decoration: line-through;' : ''}
+                         border: 1px solid {status === 'found' ? color + '44' : status === 'pending' ? '#333' : '#222'}">
+              {#if status === 'pending'}
+                <span class="inline-block w-1.5 h-1.5 border border-gray-500 border-t-gray-300 rounded-full animate-spin"></span>
+              {/if}
+              {year}
+            </span>
+          {/each}
+        </div>
+        {@const found = [...probeResults.values()].filter(s => s === 'found').length}
+        {@const total = probeResults.size}
+        {@const pending = [...probeResults.values()].filter(s => s === 'pending').length}
+        {#if pending === 0}
+          <div class="text-[9px] text-gray-500">{found}/{total} years have data</div>
+        {/if}
+      {:else if selected.years.length > 0}
+        <div class="text-[9px] text-gray-600">Checking years...</div>
+      {/if}
+    </div>
+  {:else if featureCount > 0}
+    <div class="text-[9px] text-gray-600 italic">No shard selected</div>
+  {/if}
+
+  <!-- Year legend -->
+  {#if featureCount > 0}
+    <div class="space-y-1 pt-1 border-t border-gray-800/60">
+      <div class="text-[9px] text-gray-600 uppercase tracking-wider">Year legend</div>
+      <div class="flex flex-wrap gap-x-2 gap-y-0.5">
+        {#each yearEntries as { year, color }}
+          <div class="flex items-center gap-1 text-[9px]">
+            <span class="inline-block w-2 h-2 rounded-sm" style="background: {color}"></span>
+            <span class="text-gray-400">{year}</span>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+</div>

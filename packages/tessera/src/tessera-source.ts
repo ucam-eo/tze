@@ -451,6 +451,45 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
   }
 
   /**
+   * Probe which years have real data for a given chunk position.
+   *
+   * @remarks
+   * For v2 stores, fetches a single pixel from the scales array for each
+   * time index and checks whether the value is the fill value (Infinity)
+   * or real data. Uses zarrita internally so chunk key encoding and
+   * sharding are handled automatically.
+   *
+   * @param ci - Chunk row index.
+   * @param cj - Chunk column index.
+   * @returns Map of year → boolean (true = data exists). Empty map for v1 stores.
+   */
+  async probeYearData(ci: number, cj: number): Promise<Map<number, boolean>> {
+    const result = new Map<number, boolean>();
+    if (!this.store) return result;
+
+    const meta = this.store.meta;
+    if (meta.version !== 'v2' || !meta.years || meta.years.length === 0) return result;
+
+    const { r0, c0 } = this.chunkPixelBounds(ci, cj);
+
+    // Fetch one pixel of scales[t, r0:r0+1, c0:c0+1] for each time index
+    const promises = meta.years.map(async (year, t) => {
+      try {
+        const view = await fetchRegion(
+          this.store!.scalesArr,
+          [[t, t + 1], [r0, r0 + 1], [c0, c0 + 1]],
+        );
+        const val = (view.data as Float32Array)[0];
+        result.set(year, isFinite(val) && val !== 0);
+      } catch {
+        result.set(year, false);
+      }
+    });
+    await Promise.all(promises);
+    return result;
+  }
+
+  /**
    * Get the WGS84 corners of a single embedding pixel.
    *
    * @param ci - Chunk row index.

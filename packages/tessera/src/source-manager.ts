@@ -332,6 +332,24 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
     return src.getChunkBoundsLngLat(ci, cj);
   }
 
+  /**
+   * Probe which years have real data for a chunk in a specific zone.
+   *
+   * @param zoneId - Zone identifier.
+   * @param ci - Chunk row index.
+   * @param cj - Chunk column index.
+   * @returns Map of year → boolean, or empty map if zone is not open.
+   */
+  async probeYearData(
+    zoneId: string,
+    ci: number,
+    cj: number,
+  ): Promise<Map<number, boolean>> {
+    const src = this.sources.get(zoneId);
+    if (!src) return new Map();
+    return src.probeYearData(ci, cj);
+  }
+
   // ---------------------------------------------------------------------------
   // Embedding region queries
   // ---------------------------------------------------------------------------

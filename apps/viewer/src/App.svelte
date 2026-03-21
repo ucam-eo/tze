@@ -21,6 +21,7 @@
   import { zones } from './stores/stac';
   import { pointInBbox } from './lib/stac';
   import { segmentPolygons, segmentVisible } from './stores/segmentation';
+  import { explorerGrid, explorerVisible, explorerHover } from './stores/zarr-explorer';
   import UmapCloud from './components/UmapCloud.svelte';
   import TutorialOverlay from './components/TutorialOverlay.svelte';
   import { simEmbeddingTileCount, simSelectedPixel } from './stores/similarity';
@@ -190,6 +191,60 @@
         type: 'line',
         source: 'roi-regions',
         paint: { 'line-color': '#00e5ff', 'line-width': 2, 'line-opacity': 0.9, 'line-dasharray': [4, 2] },
+      });
+
+      // Explorer shard grid overlay
+      map.addSource('explorer-grid', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer({
+        id: 'explorer-grid-fill',
+        type: 'fill',
+        source: 'explorer-grid',
+        paint: {
+          'fill-color': '#00e5ff',
+          'fill-opacity': 0.04,
+        },
+        layout: { visibility: 'none' },
+      });
+      map.addLayer({
+        id: 'explorer-grid-line',
+        type: 'line',
+        source: 'explorer-grid',
+        paint: {
+          'line-color': '#00e5ff',
+          'line-width': 0.5,
+          'line-opacity': 0.35,
+        },
+        layout: { visibility: 'none' },
+      });
+
+      // Explorer selected shard highlight
+      map.addSource('explorer-selected', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer({
+        id: 'explorer-selected-fill',
+        type: 'fill',
+        source: 'explorer-selected',
+        paint: {
+          'fill-color': '#00e5ff',
+          'fill-opacity': 0.18,
+        },
+        layout: { visibility: 'none' },
+      });
+      map.addLayer({
+        id: 'explorer-selected-line',
+        type: 'line',
+        source: 'explorer-selected',
+        paint: {
+          'line-color': '#00e5ff',
+          'line-width': 2,
+          'line-opacity': 0.9,
+        },
+        layout: { visibility: 'none' },
       });
 
       // Similarity reference pixel marker
@@ -395,6 +450,25 @@
       const mgr = get(sourceManager);
       if (!mgr) return;
 
+      if (tool === 'explorer') {
+        const features = map.queryRenderedFeatures(e.point, { layers: ['explorer-grid-fill'] });
+        if (features.length > 0) {
+          const p = features[0].properties!;
+          const years: number[] = typeof p.years === 'string' ? JSON.parse(p.years) : (p.years ?? []);
+          const ci = typeof p.ci === 'string' ? parseInt(p.ci, 10) : Number(p.ci);
+          const cj = typeof p.cj === 'string' ? parseInt(p.cj, 10) : Number(p.cj);
+          explorerHover.set({
+            zoneId: String(p.zone),
+            ci, cj,
+            years,
+            utmBounds: [0, 0, 0, 0],
+          });
+        } else {
+          explorerHover.set(null);
+        }
+        return;
+      }
+
       if (tool === 'similarity') {
         similarityRef?.handleClick(e.lngLat.lng, e.lngLat.lat);
         return;
@@ -554,6 +628,56 @@
         features: regions.map(r => r.feature),
       });
     }
+  });
+
+  // Sync explorer grid data and visibility to map
+  $effect(() => {
+    const map = $mapInstance;
+    const grid = $explorerGrid;
+    if (!map) return;
+    const src = map.getSource('explorer-grid') as maplibregl.GeoJSONSource | undefined;
+    if (src) src.setData(grid);
+  });
+
+  $effect(() => {
+    const map = $mapInstance;
+    const visible = $explorerVisible;
+    if (!map) return;
+    const vis = visible ? 'visible' : 'none';
+    if (map.getLayer('explorer-grid-fill')) map.setLayoutProperty('explorer-grid-fill', 'visibility', vis);
+    if (map.getLayer('explorer-grid-line')) map.setLayoutProperty('explorer-grid-line', 'visibility', vis);
+    if (map.getLayer('explorer-selected-fill')) map.setLayoutProperty('explorer-selected-fill', 'visibility', vis);
+    if (map.getLayer('explorer-selected-line')) map.setLayoutProperty('explorer-selected-line', 'visibility', vis);
+  });
+
+  // Sync selected explorer shard highlight
+  $effect(() => {
+    const map = $mapInstance;
+    const hover = $explorerHover;
+    if (!map) return;
+    const src = map.getSource('explorer-selected') as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+    if (hover) {
+      const mgr = get(sourceManager);
+      if (mgr) {
+        const corners = mgr.getChunkBoundsLngLat(hover.zoneId, hover.ci, hover.cj);
+        if (corners) {
+          src.setData({
+            type: 'FeatureCollection',
+            features: [{
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'Polygon',
+                coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
+              },
+            }],
+          });
+          return;
+        }
+      }
+    }
+    src.setData({ type: 'FeatureCollection', features: [] });
   });
 </script>
 

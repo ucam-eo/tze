@@ -1,7 +1,7 @@
 <script lang="ts">
   import {
     Search, Crosshair, BoxSelect, Pentagon, Save, FolderOpen, User,
-    X, Trash2, Upload, Download, Tags, Scan, ChevronDown,
+    X, Trash2, Upload, Download, Tags, Scan, ChevronDown, Layers,
   } from 'lucide-svelte';
   import { zones, catalogStatus, availableYears, activeYear, switchYear } from '../stores/stac';
   import { metadata, loading } from '../stores/zarr';
@@ -245,6 +245,7 @@
     { id: 'similarity', label: 'Similar', icon: Search },
     { id: 'classifier', label: 'Classify', icon: Tags },
     { id: 'segmenter',  label: 'Segment', icon: Scan },
+    { id: 'explorer',   label: 'Explorer', icon: Layers },
   ];
 
   // --- Contextual status ---
