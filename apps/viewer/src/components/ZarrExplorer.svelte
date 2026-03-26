@@ -122,58 +122,30 @@
         const minN = Math.min(...utmCorners.map(c => c[1]));
         const maxN = Math.max(...utmCorners.map(c => c[1]));
 
-        // Pick grid cell size based on viewport width:
-        // - Wide view (>100km): shard grid (4096 px = ~41km)
-        // - Medium (<100km): 512px grid (~5km)
-        // - Close (<10km): 128px grid (~1.3km)
-        // - Very close (<2km): 32px grid (~320m)
-        const viewWidth = maxE - minE;
-        let cellPx: number;
-        if (viewWidth > 100_000) cellPx = shardH;
-        else if (viewWidth > 10_000) cellPx = 512;
-        else if (viewWidth > 2_000) cellPx = 128;
-        else cellPx = 32;
+        // Always show the shard grid — use getChunkBoundsLngLat which
+        // is proven to work correctly.
+        const nRows = Math.ceil(H / shardH);
+        const nCols = Math.ceil(W / shardW);
+        const shardM = shardH * px;
 
-        const cellM = cellPx * px;
-        const nRows = Math.ceil(H / cellPx);
-        const nCols = Math.ceil(W / cellPx);
+        const cjMin = Math.max(0, Math.floor((minE - originE) / shardM));
+        const cjMax = Math.min(nCols - 1, Math.floor((maxE - originE) / shardM));
+        const ciMin = Math.max(0, Math.floor((originN - maxN) / shardM));
+        const ciMax = Math.min(nRows - 1, Math.floor((originN - minN) / shardM));
 
-        const cjMin = Math.max(0, Math.floor((minE - originE) / cellM));
-        const cjMax = Math.min(nCols - 1, Math.floor((maxE - originE) / cellM));
-        const ciMin = Math.max(0, Math.floor((originN - maxN) / cellM));
-        const ciMax = Math.min(nRows - 1, Math.floor((originN - minN) / cellM));
-
-        // Which shard does each cell belong to?
         for (let ci = ciMin; ci <= ciMax; ci++) {
           for (let cj = cjMin; cj <= cjMax; cj++) {
             if (features.length >= MAX_FEATURES) { overflow = true; break; }
 
-            // Compute cell bounds in UTM, then project to WGS84
-            const cellE = originE + cj * cellM;
-            const cellN = originN - ci * cellM;
-            const cellE2 = Math.min(cellE + cellM, originE + W * px);
-            const cellN2 = Math.max(cellN - cellM, originN - H * px);
-
-            const tl = proj.inverse(cellE, cellN);
-            const tr = proj.inverse(cellE2, cellN);
-            const br = proj.inverse(cellE2, cellN2);
-            const bl = proj.inverse(cellE, cellN2);
-
-            // Shard index this cell belongs to
-            const si = Math.floor((ci * cellPx) / shardH);
-            const sj = Math.floor((cj * cellPx) / shardW);
+            const corners = src.getChunkBoundsLngLat(ci, cj);
+            if (!corners) continue;
 
             features.push({
               type: 'Feature',
-              properties: {
-                zone: zone.id,
-                ci: si, cj: sj,  // shard index (for click handler)
-                cellCi: ci, cellCj: cj, cellPx,
-                years: JSON.stringify(meta.years ?? []),
-              },
+              properties: { zone: zone.id, ci, cj, years: JSON.stringify(meta.years ?? []) },
               geometry: {
                 type: 'Polygon',
-                coordinates: [[tl, tr, br, bl, tl]],
+                coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
               },
             });
           }
@@ -202,9 +174,14 @@
 
     untrack(() => buildVisibleGrid());
 
-    const handler = () => buildVisibleGrid();
+    let debounceTimer: ReturnType<typeof setTimeout>;
+    const handler = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => buildVisibleGrid(), 150);
+    };
     map.on('moveend', handler);
     return () => {
+      clearTimeout(debounceTimer);
       map.off('moveend', handler);
       explorerVisible.set(false);
       explorerGrid.set({ type: 'FeatureCollection', features: [] });
