@@ -608,7 +608,10 @@
     const grid = $explorerGrid;
     if (!map) return;
     const src = map.getSource('explorer-grid') as maplibregl.GeoJSONSource | undefined;
-    if (src) src.setData(grid);
+    if (src) {
+      console.log(`[explorer] setData: ${grid.features.length} features, visible=${get(explorerVisible)}`);
+      src.setData(grid);
+    }
   });
 
   // Sync explorer visibility
