@@ -261,7 +261,19 @@
             </div>
 
             <!-- Cosine similarity between consecutive years -->
-            <div class="text-[8px] text-gray-600 mt-1">Year-to-year similarity</div>
+            <div class="text-[8px] text-gray-600 mt-1 flex items-center gap-1">
+              Year-to-year similarity
+              <span class="relative group cursor-help">
+                <span class="inline-flex items-center justify-center w-3 h-3 rounded-full border border-gray-600 text-[6px] text-gray-500">?</span>
+                <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 w-44 p-1.5 bg-gray-900 border border-gray-700 rounded text-[8px] text-gray-400 leading-snug hidden group-hover:block z-50 shadow-lg">
+                  Cosine similarity measures how similar two embedding vectors are regardless of magnitude.
+                  <strong class="text-gray-300">1.0</strong> = identical direction,
+                  <strong class="text-green-400">&gt;0.95</strong> = stable (green),
+                  <strong class="text-yellow-400">&gt;0.80</strong> = moderate change (yellow),
+                  <strong class="text-red-400">&lt;0.80</strong> = significant change (red) — likely land cover change.
+                </span>
+              </span>
+            </div>
             <svg viewBox="0 0 200 30" class="w-full h-6">
               {#each cosines as cos, i}
                 {@const x = ((i + 0.5) / cosines.length) * 180 + 10}
