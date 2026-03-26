@@ -394,6 +394,53 @@
         }
       }
 
+      // Explorer: show 0.1° tile grid within hovered shard
+      if (get(activeTool) === 'explorer' && get(explorerVisible)) {
+        const selSrc = map.getSource('explorer-selected') as maplibregl.GeoJSONSource | undefined;
+        if (selSrc) {
+          const feats = map.queryRenderedFeatures(e.point, { layers: ['explorer-grid-fill'] });
+          if (feats.length > 0) {
+            const p = feats[0].properties!;
+            const ci = typeof p.ci === 'string' ? parseInt(p.ci, 10) : Number(p.ci);
+            const cj = typeof p.cj === 'string' ? parseInt(p.cj, 10) : Number(p.cj);
+            const zoneId = String(p.zone);
+            const hoverKey = `${zoneId}:${ci}_${cj}`;
+            if ((selSrc as unknown as { _hoverKey?: string })._hoverKey !== hoverKey) {
+              (selSrc as unknown as { _hoverKey?: string })._hoverKey = hoverKey;
+              const mgr2 = get(sourceManager);
+              const corners = mgr2?.getChunkBoundsLngLat(zoneId, ci, cj);
+              if (corners) {
+                const lngs = corners.map(c => c[0]);
+                const lats = corners.map(c => c[1]);
+                const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+                const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+                const tileFeatures: GeoJSON.Feature[] = [{
+                  type: 'Feature', properties: { kind: 'shard' },
+                  geometry: { type: 'Polygon', coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]] },
+                }];
+                const step = 0.1;
+                for (let tLon = Math.floor(minLng / step) * step; tLon < maxLng; tLon += step) {
+                  for (let tLat = Math.floor(minLat / step) * step; tLat < maxLat; tLat += step) {
+                    tileFeatures.push({
+                      type: 'Feature', properties: { kind: 'tile_grid' },
+                      geometry: { type: 'Polygon', coordinates: [[[tLon,tLat],[tLon+step,tLat],[tLon+step,tLat+step],[tLon,tLat+step],[tLon,tLat]]] },
+                    });
+                  }
+                }
+                selSrc.setData({ type: 'FeatureCollection', features: tileFeatures });
+              }
+            }
+          } else {
+            // Not hovering over a shard — clear tile grid (but keep selected shard if any)
+            const currentHover = get(explorerHover);
+            if (!currentHover) {
+              (selSrc as unknown as { _hoverKey?: string })._hoverKey = '';
+              selSrc.setData({ type: 'FeatureCollection', features: [] });
+            }
+          }
+        }
+      }
+
       // Floating tooltip: classification pixels + label markers
       const tip = document.getElementById('class-tooltip');
       if (!tip) return;
@@ -670,7 +717,7 @@
     if (map.getLayer('explorer-tile-grid-line')) map.setLayoutProperty('explorer-tile-grid-line', 'visibility', vis);
   });
 
-  // Sync selected explorer shard highlight
+  // Sync selected explorer shard highlight (tile grid is shown on hover via mousemove)
   $effect(() => {
     const map = $mapInstance;
     const hover = $explorerHover;
@@ -678,44 +725,30 @@
     const src = map.getSource('explorer-selected') as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
     if (hover) {
+      // Force the tile grid to show for the selected shard
       const mgr = get(sourceManager);
       if (mgr) {
         const corners = mgr.getChunkBoundsLngLat(hover.zoneId, hover.ci, hover.cj);
         if (corners) {
-          const features: GeoJSON.Feature[] = [{
-            type: 'Feature',
-            properties: { kind: 'shard' },
-            geometry: {
-              type: 'Polygon',
-              coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
-            },
-          }];
-
-          // Compute 0.1° tile grid rectangles within the shard.
-          // Each tile covers 0.1° × 0.1° in WGS84 with centres at n*0.1+0.05.
           const lngs = corners.map(c => c[0]);
           const lats = corners.map(c => c[1]);
           const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
           const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+          const features: GeoJSON.Feature[] = [{
+            type: 'Feature', properties: { kind: 'shard' },
+            geometry: { type: 'Polygon', coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]] },
+          }];
           const step = 0.1;
-          // Tile boundaries are at multiples of 0.1
-          const startLng = Math.floor(minLng / step) * step;
-          const startLat = Math.floor(minLat / step) * step;
-          for (let tLon = startLng; tLon < maxLng; tLon += step) {
-            for (let tLat = startLat; tLat < maxLat; tLat += step) {
-              const w = tLon, e = tLon + step, s = tLat, n = tLat + step;
+          for (let tLon = Math.floor(minLng / step) * step; tLon < maxLng; tLon += step) {
+            for (let tLat = Math.floor(minLat / step) * step; tLat < maxLat; tLat += step) {
               features.push({
-                type: 'Feature',
-                properties: { kind: 'tile_grid' },
-                geometry: {
-                  type: 'Polygon',
-                  coordinates: [[[w,s],[e,s],[e,n],[w,n],[w,s]]],
-                },
+                type: 'Feature', properties: { kind: 'tile_grid' },
+                geometry: { type: 'Polygon', coordinates: [[[tLon,tLat],[tLon+step,tLat],[tLon+step,tLat+step],[tLon,tLat+step],[tLon,tLat]]] },
               });
             }
           }
-
           src.setData({ type: 'FeatureCollection', features });
+          (src as unknown as { _hoverKey?: string })._hoverKey = `${hover.zoneId}:${hover.ci}_${hover.cj}`;
           return;
         }
       }

@@ -12,37 +12,34 @@
   let gridError = $state<string | null>(null);
 
   const MAX_FEATURES = 3000;
-
-  // Generation counter to discard stale async results
   let gen = 0;
 
-  // Per-year probe results for the selected shard
-  // year → 'pending' | 'found' | 'missing'
+  // Year probe state — only triggered by button click
   let probeResults = $state<Map<number, 'pending' | 'found' | 'missing'>>(new Map());
   let probeGen = 0;
+  let probing = $state(false);
 
-  /** Probe year data for the selected shard using zarrita (handles sharding automatically). */
-  async function probeSelectedShard(zoneId: string, ci: number, cj: number) {
+  async function probeSelectedShard() {
+    const hover = get(explorerHover);
+    if (!hover) return;
     const myProbeGen = ++probeGen;
+    probing = true;
     const mgr = get(sourceManager);
-    if (!mgr) return;
+    if (!mgr) { probing = false; return; }
 
-    // Ensure source is open
-    let src = mgr.getOpenSource(zoneId);
+    let src = mgr.getOpenSource(hover.zoneId);
     if (!src) {
-      try { src = await mgr.getSource(zoneId); } catch { return; }
+      try { src = await mgr.getSource(hover.zoneId); } catch { probing = false; return; }
     }
     const meta = src.metadata;
-    if (!meta || !meta.years || meta.years.length === 0) return;
+    if (!meta?.years?.length) { probing = false; return; }
 
-    // Show all years as pending
     const pending = new Map<number, 'pending' | 'found' | 'missing'>();
     for (const year of meta.years) pending.set(year, 'pending');
     probeResults = new Map(pending);
 
-    // Use zarrita via probeYearData — fetches a 1-pixel slice per year
     if (myProbeGen !== probeGen) return;
-    const yearMap = await mgr.probeYearData(zoneId, ci, cj);
+    const yearMap = await mgr.probeYearData(hover.zoneId, hover.ci, hover.cj);
     if (myProbeGen !== probeGen) return;
 
     const results = new Map<number, 'pending' | 'found' | 'missing'>();
@@ -50,24 +47,17 @@
       results.set(year, exists ? 'found' : 'missing');
     }
     probeResults = results;
+    probing = false;
   }
 
-  // When the selected shard changes, probe its years
+  // Clear probe results when selection changes
   $effect(() => {
-    const hover = $explorerHover;
-    if (hover) {
-      untrack(() => probeSelectedShard(hover.zoneId, hover.ci, hover.cj));
-    } else {
-      probeResults = new Map();
-      probeGen++;
-    }
+    const _hover = $explorerHover;
+    probeResults = new Map();
+    probeGen++;
+    probing = false;
   });
 
-  /**
-   * Build grid for only the visible chunk range by converting viewport
-   * corners to each zone's UTM, computing the chunk index range, and
-   * iterating only that small window.
-   */
   async function buildVisibleGrid() {
     const myGen = ++gen;
     const mgr = get(sourceManager);
@@ -87,11 +77,10 @@
       for (const zone of allZones) {
         if (myGen !== gen) return;
 
-        // Skip zones fully outside viewport
         const [zW, zS, zE, zN] = zone.bbox;
         if (zE < vW || zW > vE || zN < vS || zS > vN) continue;
 
-        // Open source if needed (reads zarr.json metadata, fast)
+        // Open source if needed
         let src = mgr.getOpenSource(zone.id);
         if (!src) {
           try { src = await mgr.getSource(zone.id); } catch { continue; }
@@ -102,13 +91,15 @@
         if (!meta || !proj) continue;
 
         const [H, W] = meta.shape;
-        const [shardH, shardW] = meta.chunkShape;  // shard size (4096×4096)
+        const [shardH, shardW] = meta.chunkShape;
+        const nRows = Math.ceil(H / shardH);
+        const nCols = Math.ceil(W / shardW);
         const t = meta.transform;
         const px = t[0];
         const originE = t[2];
         const originN = t[5];
+        const shardM = shardH * px;
 
-        // Convert viewport corners to this zone's UTM
         const clampLng = (v: number) => Math.max(zW, Math.min(zE, v));
         const clampLat = (v: number) => Math.max(zS, Math.min(zN, v));
         const utmCorners = [
@@ -122,12 +113,6 @@
         const minN = Math.min(...utmCorners.map(c => c[1]));
         const maxN = Math.max(...utmCorners.map(c => c[1]));
 
-        // Always show the shard grid — use getChunkBoundsLngLat which
-        // is proven to work correctly.
-        const nRows = Math.ceil(H / shardH);
-        const nCols = Math.ceil(W / shardW);
-        const shardM = shardH * px;
-
         const cjMin = Math.max(0, Math.floor((minE - originE) / shardM));
         const cjMax = Math.min(nCols - 1, Math.floor((maxE - originE) / shardM));
         const ciMin = Math.max(0, Math.floor((originN - maxN) / shardM));
@@ -136,10 +121,8 @@
         for (let ci = ciMin; ci <= ciMax; ci++) {
           for (let cj = cjMin; cj <= cjMax; cj++) {
             if (features.length >= MAX_FEATURES) { overflow = true; break; }
-
             const corners = src.getChunkBoundsLngLat(ci, cj);
             if (!corners) continue;
-
             features.push({
               type: 'Feature',
               properties: { zone: zone.id, ci, cj, years: JSON.stringify(meta.years ?? []) },
@@ -165,8 +148,7 @@
     }
   }
 
-  // Rebuild visible grid on activation and on map move.
-  // Use untrack to avoid reading the stores we write (explorerGrid, explorerVisible).
+  // Build grid on activation and on map move
   $effect(() => {
     const mgr = $sourceManager;
     const map = $mapInstance;
@@ -199,6 +181,7 @@
 <div class="space-y-3" data-tutorial="explorer-panel">
   <div class="text-[10px] text-gray-500">
     Click a shard on the map to see its details.
+    Hover over a shard when zoomed in to see 0.1° tile boundaries.
   </div>
 
   <!-- Store-level metadata -->
@@ -241,7 +224,7 @@
     <div class="bg-gray-900/80 border border-term-cyan/30 rounded px-2.5 py-2 space-y-1.5">
       <div class="text-[10px] text-gray-300 font-medium">
         {selected.zoneId}
-        <span class="text-gray-500 font-normal">chunk [{selected.ci}, {selected.cj}]</span>
+        <span class="text-gray-500 font-normal">shard [{selected.ci}, {selected.cj}]</span>
       </div>
       {#if meta}
         {@const px = meta.transform[0]}
@@ -285,6 +268,8 @@
           {/if}
         </div>
       {/if}
+
+      <!-- Year verification — on-demand -->
       {#if probeResults.size > 0}
         <div class="text-[9px] text-gray-500 uppercase tracking-wider">Years (verified)</div>
         <div class="flex flex-wrap gap-1">
@@ -308,8 +293,16 @@
         {#if pending === 0}
           <div class="text-[9px] text-gray-500">{found}/{total} years have data</div>
         {/if}
-      {:else if selected.years.length > 0}
-        <div class="text-[9px] text-gray-600">Checking years...</div>
+      {:else}
+        <button
+          onclick={probeSelectedShard}
+          disabled={probing}
+          class="text-[9px] text-gray-500 hover:text-term-cyan border border-gray-700/60
+                 hover:border-term-cyan/40 px-2 py-1 rounded transition-all
+                 disabled:opacity-40 disabled:pointer-events-none"
+        >
+          {probing ? 'Checking...' : 'Verify years'}
+        </button>
       {/if}
     </div>
   {:else if featureCount > 0}
