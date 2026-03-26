@@ -3,7 +3,8 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
-    "lib": ["ES2022", "ESNext", "DOM", "DOM.Iterable", "WebWorker"]
+    "lib": ["ES2022", "ESNext", "DOM", "DOM.Iterable", "WebWorker"],
+    "types": []
   },
   "include": ["src"]
 }
