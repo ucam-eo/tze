@@ -8,6 +8,70 @@
   let probeGen = 0;
   let probing = $state(false);
 
+  // Temporal analysis state
+  type YearData = { year: number; norm: number; embedding: Float32Array };
+  let temporalData = $state<YearData[]>([]);
+  let temporalLoading = $state(false);
+  let temporalGen = 0;
+
+  async function fetchTemporalData() {
+    const hover = get(explorerHover);
+    if (!hover || hover.ci < 0) return;
+    const myGen = ++temporalGen;
+    temporalLoading = true;
+    temporalData = [];
+
+    const mgr = get(sourceManager);
+    if (!mgr) { temporalLoading = false; return; }
+
+    let src = mgr.getOpenSource(hover.zoneId);
+    if (!src) {
+      try { src = await mgr.getSource(hover.zoneId); } catch { temporalLoading = false; return; }
+    }
+    const meta = src.metadata;
+    if (!meta?.years?.length || meta.version !== 'v2') { temporalLoading = false; return; }
+
+    const store = (src as unknown as { store: { embArr: unknown; scalesArr: unknown } }).store;
+    if (!store) { temporalLoading = false; return; }
+
+    // Pixel at top-left of shard + 100 pixels in (avoid edge/water pixels)
+    const r0 = hover.ci * meta.chunkShape[0] + 100;
+    const c0 = hover.cj * meta.chunkShape[1] + 100;
+    const T = meta.years.length;
+    const nBands = meta.nBands;
+
+    try {
+      const { fetchRegion } = await import('@ucam-eo/tessera');
+      if (myGen !== temporalGen) return;
+
+      // Fetch all years at once: embeddings[0:T, :, r0:r0+1, c0:c0+1] and scales[0:T, r0:r0+1, c0:c0+1]
+      const [embView, scaleView] = await Promise.all([
+        fetchRegion(store.embArr as Parameters<typeof fetchRegion>[0], [null, null, [r0, r0 + 1], [c0, c0 + 1]]),
+        fetchRegion(store.scalesArr as Parameters<typeof fetchRegion>[0], [null, [r0, r0 + 1], [c0, c0 + 1]]),
+      ]);
+      if (myGen !== temporalGen) return;
+
+      const scales = new Float32Array(scaleView.data.buffer, scaleView.data.byteOffset, T);
+      const int8All = new Int8Array(embView.data.buffer, embView.data.byteOffset, T * nBands);
+
+      const results: YearData[] = [];
+      for (let t = 0; t < T; t++) {
+        const scale = scales[t];
+        if (!isFinite(scale) || scale === 0) continue;
+        const emb = new Float32Array(nBands);
+        let normSq = 0;
+        for (let b = 0; b < nBands; b++) {
+          emb[b] = int8All[t * nBands + b] * scale;
+          normSq += emb[b] * emb[b];
+        }
+        results.push({ year: meta.years[t], norm: Math.sqrt(normSq), embedding: emb });
+      }
+      temporalData = results;
+    } catch { /* fetch failed */ }
+
+    if (myGen === temporalGen) temporalLoading = false;
+  }
+
   async function probeSelectedShard() {
     const hover = get(explorerHover);
     if (!hover) return;
@@ -49,6 +113,11 @@
     probeResults = new Map();
     probeGen++;
     probing = false;
+
+    // Reset temporal data
+    temporalData = [];
+    temporalGen++;
+    temporalLoading = false;
 
     // Start a new probe after 300ms if a valid shard is selected
     if (hover && hover.ci >= 0) {
@@ -149,6 +218,76 @@
         {/if}
       {:else if selected && selected.ci >= 0}
         <div class="text-[9px] text-gray-600 italic">Checking years...</div>
+      {/if}
+
+      <!-- Temporal analysis -->
+      {#if selected && selected.ci >= 0}
+        {#if temporalData.length > 1}
+          {@const maxNorm = Math.max(...temporalData.map(d => d.norm))}
+          {@const minNorm = Math.min(...temporalData.map(d => d.norm))}
+          {@const normRange = maxNorm - minNorm || 1}
+          {@const cosines = temporalData.slice(1).map((d, i) => {
+            const prev = temporalData[i].embedding;
+            const curr = d.embedding;
+            let dot = 0, n1 = 0, n2 = 0;
+            for (let b = 0; b < prev.length; b++) {
+              dot += prev[b] * curr[b];
+              n1 += prev[b] * prev[b];
+              n2 += curr[b] * curr[b];
+            }
+            return dot / (Math.sqrt(n1) * Math.sqrt(n2) || 1);
+          })}
+          <div class="border-t border-gray-800/40 pt-1.5 space-y-1">
+            <div class="text-[9px] text-gray-500 uppercase tracking-wider">Temporal</div>
+            <!-- Norm sparkline -->
+            <div class="text-[8px] text-gray-600">Embedding norm</div>
+            <svg viewBox="0 0 200 40" class="w-full h-8">
+              {#each temporalData as d, i}
+                {@const x = (i / (temporalData.length - 1)) * 180 + 10}
+                {@const y = 35 - ((d.norm - minNorm) / normRange) * 30}
+                {@const color = YEAR_COLORS[d.year] ?? '#888'}
+                <circle cx={x} cy={y} r="3" fill={color} opacity="0.9" />
+                {#if i > 0}
+                  {@const px = ((i - 1) / (temporalData.length - 1)) * 180 + 10}
+                  {@const py = 35 - ((temporalData[i-1].norm - minNorm) / normRange) * 30}
+                  <line x1={px} y1={py} x2={x} y2={y} stroke={color} stroke-width="1.5" opacity="0.5" />
+                {/if}
+                <text x={x} y="38" text-anchor="middle" fill="#666" font-size="5">{String(d.year).slice(2)}</text>
+              {/each}
+            </svg>
+            <div class="flex justify-between text-[8px] text-gray-600 tabular-nums">
+              <span>{minNorm.toFixed(1)}</span>
+              <span>{maxNorm.toFixed(1)}</span>
+            </div>
+
+            <!-- Cosine similarity between consecutive years -->
+            <div class="text-[8px] text-gray-600 mt-1">Year-to-year similarity</div>
+            <svg viewBox="0 0 200 30" class="w-full h-6">
+              {#each cosines as cos, i}
+                {@const x = ((i + 0.5) / cosines.length) * 180 + 10}
+                {@const barH = Math.max(1, cos * 25)}
+                {@const hue = cos > 0.95 ? 120 : cos > 0.8 ? 60 : 0}
+                <rect x={x - 6} y={25 - barH} width="12" height={barH}
+                      fill="hsl({hue}, 70%, 50%)" opacity="0.7" rx="1" />
+                <text x={x} y="29" text-anchor="middle" fill="#666" font-size="4.5">
+                  {cos.toFixed(2)}
+                </text>
+              {/each}
+            </svg>
+          </div>
+        {:else if temporalLoading}
+          <div class="text-[9px] text-gray-600 italic border-t border-gray-800/40 pt-1.5">
+            Loading temporal data...
+          </div>
+        {:else if temporalData.length === 0 && !temporalLoading}
+          <button
+            onclick={fetchTemporalData}
+            class="w-full text-[9px] text-gray-500 hover:text-term-cyan border border-gray-700/60
+                   hover:border-term-cyan/40 px-2 py-1.5 rounded transition-all mt-1"
+          >
+            Compare across years
+          </button>
+        {/if}
       {/if}
     </div>
   {/if}
