@@ -134,9 +134,7 @@ export function importOsmLabels(
     labels.update(ls => [...ls, ...toAddLabels]);
   }
 
-  console.log(`[importOsmLabels] created ${classesCreated} classes, imported ${labelsImported} labels`);
-  console.log(`[importOsmLabels] total classes now:`, get(classes).map(c => `${c.name}(id=${c.id})`));
-  console.log(`[importOsmLabels] total labels now:`, get(labels).length);
+  // console.log(`[importOsmLabels] created ${classesCreated} classes, imported ${labelsImported} labels`);
 
   return { classesCreated, labelsImported };
 }

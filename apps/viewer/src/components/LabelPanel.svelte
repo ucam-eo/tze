@@ -48,11 +48,9 @@
     const allLabels = $labels;
     const allClasses = $classes;
 
-    // Diagnostic: log what the classifier receives
+    // Diagnostic: count labels per class (kept for debugging, logging removed)
     const byClass = new Map<number, number>();
     for (const l of allLabels) byClass.set(l.classId, (byClass.get(l.classId) ?? 0) + 1);
-    console.log('[classify] classes:', allClasses.map(c => `${c.name}(id=${c.id})`));
-    console.log('[classify] labels:', allLabels.length, 'across classes:', [...byClass.entries()].map(([id, n]) => `id=${id}:${n}`));
 
     try {
       dm?.clearClassificationOverlays();

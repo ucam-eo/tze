@@ -42,7 +42,7 @@ export async function initManager(initialZoneId?: string): Promise<void> {
   if (oldDisplay) oldDisplay.remove();
 
   status.set('Initializing...');
-  console.log('[initManager] Starting with', filteredZones.length, 'zones, initialZone:', initialZoneId);
+  // console.log('[initManager] Starting with', filteredZones.length, 'zones, initialZone:', initialZoneId);
 
   try {
     const mobile = window.innerWidth < 640 || /iPhone|iPad|Android/i.test(navigator.userAgent);
@@ -77,7 +77,7 @@ export async function initManager(initialZoneId?: string): Promise<void> {
 
     catalogStatus.set('loaded');
     status.set('Ready');
-    console.log('[initManager] Complete, manager ready');
+    // console.log('[initManager] Complete, manager ready');
   } catch (err) {
     console.error('[initManager] Failed:', err);
     status.set(`Error: ${(err as Error).message}`);

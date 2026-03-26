@@ -47,7 +47,7 @@ export function setConfirmLargeRegion(fn: (count: number) => Promise<boolean>) {
 export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false } = {}): Promise<boolean> {
   const sm = get(sourceManager);
   const dm = get(displayManager);
-  if (!sm) return;
+  if (!sm) return false;
 
   const geometry = feature.geometry as GeoJSON.Polygon;
   const managedChunks = await sm.getChunksInRegion(geometry);
@@ -66,7 +66,7 @@ export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false 
   // Add region immediately (shows in UI with 0 tiles)
   roiRegions.update(rs => [...rs, region]);
 
-  if (managedChunks.length === 0) return;
+  if (managedChunks.length === 0) return true;
 
   // Group chunks by zone for loading
   const byZone = new Map<string, { ci: number; cj: number }[]>();
