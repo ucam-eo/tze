@@ -91,9 +91,12 @@
         const [zW, zS, zE, zN] = zone.bbox;
         if (zE < vW || zW > vE || zN < vS || zS > vN) continue;
 
-        // Only use already-open sources (no network requests on pan)
-        const src = mgr.getOpenSource(zone.id);
-        if (!src) continue;
+        // Open source if needed (reads zarr.json metadata, fast)
+        let src = mgr.getOpenSource(zone.id);
+        if (!src) {
+          try { src = await mgr.getSource(zone.id); } catch { continue; }
+          if (myGen !== gen) return;
+        }
         const meta = src.metadata;
         const proj = src.projection;
         if (!meta || !proj) continue;
