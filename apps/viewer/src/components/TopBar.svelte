@@ -242,10 +242,10 @@
 
   // --- Tool tabs ---
   const tools: { id: ToolId; label: string; icon: typeof Search }[] = [
+    { id: 'explorer',   label: 'Explorer', icon: Layers },
     { id: 'similarity', label: 'Similar', icon: Search },
     { id: 'classifier', label: 'Classify', icon: Tags },
     { id: 'segmenter',  label: 'Segment', icon: Scan },
-    { id: 'explorer',   label: 'Explorer', icon: Layers },
   ];
 
   // --- Contextual status ---

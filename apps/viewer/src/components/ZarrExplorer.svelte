@@ -191,6 +191,24 @@
     Click a shard on the map to see its details.
   </div>
 
+  <!-- Store-level metadata -->
+  {#if $sourceManager}
+    {@const activeSources = $sourceManager.getActiveSources?.()}
+    {#if activeSources && activeSources.size > 0}
+      {@const firstSrc = [...activeSources.values()][0]}
+      {@const m = firstSrc?.metadata}
+      {#if m}
+        <div class="text-[9px] text-gray-500 space-y-0.5 border-b border-gray-800/40 pb-2">
+          <div><span class="text-gray-400">Version</span> {m.version}</div>
+          {#if m.years && m.years.length > 0}
+            <div><span class="text-gray-400">Years</span> {m.years[0]}–{m.years[m.years.length-1]} ({m.years.length})</div>
+          {/if}
+          <div><span class="text-gray-400">Zones</span> {activeSources.size} loaded</div>
+        </div>
+      {/if}
+    {/if}
+  {/if}
+
   {#if gridError}
     <div class="text-[9px] text-red-400 break-all">{gridError}</div>
   {/if}
@@ -207,11 +225,28 @@
 
   <!-- Selected shard info -->
   {#if selected}
+    {@const mgr = $sourceManager}
+    {@const src = mgr?.getOpenSource(selected.zoneId)}
+    {@const meta = src?.metadata}
     <div class="bg-gray-900/80 border border-term-cyan/30 rounded px-2.5 py-2 space-y-1.5">
       <div class="text-[10px] text-gray-300 font-medium">
         {selected.zoneId}
         <span class="text-gray-500 font-normal">chunk [{selected.ci}, {selected.cj}]</span>
       </div>
+      {#if meta}
+        <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
+          <span class="text-gray-500">CRS</span>
+          <span class="text-gray-400">EPSG:{meta.epsg}</span>
+          <span class="text-gray-500">Pixel size</span>
+          <span class="text-gray-400">{meta.transform[0]}m</span>
+          <span class="text-gray-500">Dimensions</span>
+          <span class="text-gray-400">{meta.nBands} bands</span>
+          <span class="text-gray-500">Shard</span>
+          <span class="text-gray-400">{meta.chunkShape[0]}×{meta.chunkShape[1]} px</span>
+          <span class="text-gray-500">Array</span>
+          <span class="text-gray-400">{meta.shape[0]}×{meta.shape[1]} px</span>
+        </div>
+      {/if}
       {#if probeResults.size > 0}
         <div class="text-[9px] text-gray-500 uppercase tracking-wider">Years (verified)</div>
         <div class="flex flex-wrap gap-1">
