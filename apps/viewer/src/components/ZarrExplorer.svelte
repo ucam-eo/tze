@@ -139,7 +139,6 @@
 
       if (myGen !== gen) return;
       featureCount = features.length;
-      console.log(`[explorer] buildVisibleGrid: ${features.length} shard features`);
       explorerGrid.set({ type: 'FeatureCollection', features });
       explorerVisible.set(true);
     } catch (err) {

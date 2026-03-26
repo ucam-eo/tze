@@ -203,14 +203,14 @@
         id: 'explorer-grid-fill',
         type: 'fill',
         source: 'explorer-grid',
-        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.05 },
+        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.08 },
         layout: { visibility: 'none' },
       });
       map.addLayer({
         id: 'explorer-grid-line',
         type: 'line',
         source: 'explorer-grid',
-        paint: { 'line-color': '#00e5ff', 'line-width': 1, 'line-opacity': 0.5 },
+        paint: { 'line-color': '#00e5ff', 'line-width': 1.5, 'line-opacity': 0.7 },
         layout: { visibility: 'none' },
       });
 
@@ -608,10 +608,7 @@
     const grid = $explorerGrid;
     if (!map) return;
     const src = map.getSource('explorer-grid') as maplibregl.GeoJSONSource | undefined;
-    if (src) {
-      console.log(`[explorer] setData: ${grid.features.length} features, visible=${get(explorerVisible)}`);
-      src.setData(grid);
-    }
+    if (src) src.setData(grid);
   });
 
   // Sync explorer visibility
