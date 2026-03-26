@@ -39,6 +39,52 @@
   let osmAutoImport = $state(false);
   let sidebarOpen = $state(false);
 
+  // Explorer grid state
+  let explorerHoverKey = '';
+
+  // Rebuild the explorer-grid source: shard grid + hover highlight + tile grid
+  function rebuildExplorerGrid(hoverZone: string | null, hoverCi: number, hoverCj: number) {
+    const map = get(mapInstance);
+    if (!map) return;
+    const gridSrc = map.getSource('explorer-grid') as maplibregl.GeoJSONSource | undefined;
+    if (!gridSrc) return;
+
+    const currentGrid = get(explorerGrid);
+    const features: GeoJSON.Feature[] = [];
+
+    // Shard features
+    for (const f of currentGrid.features) {
+      features.push({ ...f, properties: { ...f.properties, kind: 'shard' } });
+    }
+
+    // Hover highlight + tile grid for hovered shard
+    if (hoverZone) {
+      const mgr2 = get(sourceManager);
+      const corners = mgr2?.getChunkBoundsLngLat(hoverZone, hoverCi, hoverCj);
+      if (corners) {
+        features.push({
+          type: 'Feature', properties: { kind: 'hover' },
+          geometry: { type: 'Polygon', coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]] },
+        });
+        const lngs = corners.map(c => c[0]);
+        const lats = corners.map(c => c[1]);
+        const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+        const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+        const step = 0.1;
+        for (let tLon = Math.floor(minLng / step) * step; tLon < maxLng; tLon += step) {
+          for (let tLat = Math.floor(minLat / step) * step; tLat < maxLat; tLat += step) {
+            features.push({
+              type: 'Feature', properties: { kind: 'tile' },
+              geometry: { type: 'Polygon', coordinates: [[[tLon, tLat], [tLon+step, tLat], [tLon+step, tLat+step], [tLon, tLat+step], [tLon, tLat]]] },
+            });
+          }
+        }
+      }
+    }
+
+    gridSrc.setData({ type: 'FeatureCollection', features });
+  }
+
   // Large region confirmation modal state
   let largeRegionOpen = $state(false);
   let largeRegionCount = $state(0);
@@ -194,71 +240,53 @@
       });
 
       // Explorer shard grid overlay
+      // Explorer: single source for shard grid + tile grid + hover highlight
       map.addSource('explorer-grid', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       });
+      // Shard grid lines (always visible in explorer)
       map.addLayer({
-        id: 'explorer-grid-fill',
-        type: 'fill',
-        source: 'explorer-grid',
-        paint: {
-          'fill-color': '#00e5ff',
-          'fill-opacity': 0.04,
-        },
-        layout: { visibility: 'none' },
-      });
-      map.addLayer({
-        id: 'explorer-grid-line',
+        id: 'explorer-shard-line',
         type: 'line',
         source: 'explorer-grid',
-        paint: {
-          'line-color': '#00e5ff',
-          'line-width': 0.5,
-          'line-opacity': 0.35,
-        },
+        filter: ['==', ['get', 'kind'], 'shard'],
+        paint: { 'line-color': '#00e5ff', 'line-width': 1, 'line-opacity': 0.4 },
         layout: { visibility: 'none' },
       });
-
-      // Explorer selected shard highlight
-      map.addSource('explorer-selected', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-      });
+      // Shard fill (for click/hover detection)
       map.addLayer({
-        id: 'explorer-selected-fill',
+        id: 'explorer-shard-fill',
         type: 'fill',
-        source: 'explorer-selected',
+        source: 'explorer-grid',
         filter: ['==', ['get', 'kind'], 'shard'],
-        paint: {
-          'fill-color': '#00e5ff',
-          'fill-opacity': 0.12,
-        },
+        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.03 },
+        layout: { visibility: 'none' },
+      });
+      // Hovered shard highlight
+      map.addLayer({
+        id: 'explorer-hover-line',
+        type: 'line',
+        source: 'explorer-grid',
+        filter: ['==', ['get', 'kind'], 'hover'],
+        paint: { 'line-color': '#00e5ff', 'line-width': 2, 'line-opacity': 0.9 },
         layout: { visibility: 'none' },
       });
       map.addLayer({
-        id: 'explorer-selected-line',
-        type: 'line',
-        source: 'explorer-selected',
-        filter: ['==', ['get', 'kind'], 'shard'],
-        paint: {
-          'line-color': '#00e5ff',
-          'line-width': 2,
-          'line-opacity': 0.9,
-        },
+        id: 'explorer-hover-fill',
+        type: 'fill',
+        source: 'explorer-grid',
+        filter: ['==', ['get', 'kind'], 'hover'],
+        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.1 },
         layout: { visibility: 'none' },
       });
+      // 0.1° tile grid within hovered shard
       map.addLayer({
-        id: 'explorer-tile-grid-line',
+        id: 'explorer-tile-line',
         type: 'line',
-        source: 'explorer-selected',
-        filter: ['==', ['get', 'kind'], 'tile_grid'],
-        paint: {
-          'line-color': '#ff9800',
-          'line-width': 1,
-          'line-opacity': 0.5,
-          'line-dasharray': [4, 4],
-        },
+        source: 'explorer-grid',
+        filter: ['==', ['get', 'kind'], 'tile'],
+        paint: { 'line-color': '#ff9800', 'line-width': 1, 'line-opacity': 0.5, 'line-dasharray': [4, 4] },
         layout: { visibility: 'none' },
       });
 
@@ -394,50 +422,22 @@
         }
       }
 
-      // Explorer: show 0.1° tile grid within hovered shard
+      // Explorer: show tile grid + hover highlight on shard mouseover
       if (get(activeTool) === 'explorer' && get(explorerVisible)) {
-        const selSrc = map.getSource('explorer-selected') as maplibregl.GeoJSONSource | undefined;
-        if (selSrc) {
-          const feats = map.queryRenderedFeatures(e.point, { layers: ['explorer-grid-fill'] });
-          if (feats.length > 0) {
-            const p = feats[0].properties!;
-            const ci = typeof p.ci === 'string' ? parseInt(p.ci, 10) : Number(p.ci);
-            const cj = typeof p.cj === 'string' ? parseInt(p.cj, 10) : Number(p.cj);
-            const zoneId = String(p.zone);
-            const hoverKey = `${zoneId}:${ci}_${cj}`;
-            if ((selSrc as unknown as { _hoverKey?: string })._hoverKey !== hoverKey) {
-              (selSrc as unknown as { _hoverKey?: string })._hoverKey = hoverKey;
-              const mgr2 = get(sourceManager);
-              const corners = mgr2?.getChunkBoundsLngLat(zoneId, ci, cj);
-              if (corners) {
-                const lngs = corners.map(c => c[0]);
-                const lats = corners.map(c => c[1]);
-                const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-                const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-                const tileFeatures: GeoJSON.Feature[] = [{
-                  type: 'Feature', properties: { kind: 'shard' },
-                  geometry: { type: 'Polygon', coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]] },
-                }];
-                const step = 0.1;
-                for (let tLon = Math.floor(minLng / step) * step; tLon < maxLng; tLon += step) {
-                  for (let tLat = Math.floor(minLat / step) * step; tLat < maxLat; tLat += step) {
-                    tileFeatures.push({
-                      type: 'Feature', properties: { kind: 'tile_grid' },
-                      geometry: { type: 'Polygon', coordinates: [[[tLon,tLat],[tLon+step,tLat],[tLon+step,tLat+step],[tLon,tLat+step],[tLon,tLat]]] },
-                    });
-                  }
-                }
-                selSrc.setData({ type: 'FeatureCollection', features: tileFeatures });
-              }
-            }
-          } else {
-            // Not hovering over a shard — clear tile grid (but keep selected shard if any)
-            const currentHover = get(explorerHover);
-            if (!currentHover) {
-              (selSrc as unknown as { _hoverKey?: string })._hoverKey = '';
-              selSrc.setData({ type: 'FeatureCollection', features: [] });
-            }
+        const feats = map.queryRenderedFeatures(e.point, { layers: ['explorer-shard-fill'] });
+        if (feats.length > 0) {
+          const p = feats[0].properties!;
+          const ci = typeof p.ci === 'string' ? parseInt(p.ci, 10) : Number(p.ci);
+          const cj = typeof p.cj === 'string' ? parseInt(p.cj, 10) : Number(p.cj);
+          const zoneId = String(p.zone);
+          const hoverKey = `${zoneId}:${ci}_${cj}`;
+          if (explorerHoverKey !== hoverKey) {
+            explorerHoverKey = hoverKey;
+            rebuildExplorerGrid(zoneId, ci, cj);
           }
+        } else if (explorerHoverKey && !get(explorerHover)) {
+          explorerHoverKey = '';
+          rebuildExplorerGrid(null, 0, 0);
         }
       }
 
@@ -515,7 +515,7 @@
       if (!mgr) return;
 
       if (tool === 'explorer') {
-        const features = map.queryRenderedFeatures(e.point, { layers: ['explorer-grid-fill'] });
+        const features = map.queryRenderedFeatures(e.point, { layers: ['explorer-shard-fill'] });
         if (features.length > 0) {
           const p = features[0].properties!;
           const years: number[] = typeof p.years === 'string' ? JSON.parse(p.years) : (p.years ?? []);
@@ -697,12 +697,17 @@
   });
 
   // Sync explorer grid data and visibility to map
+  // When shard grid data changes, rebuild the combined source
   $effect(() => {
     const map = $mapInstance;
-    const grid = $explorerGrid;
+    const _grid = $explorerGrid;  // track for reactivity
     if (!map) return;
-    const src = map.getSource('explorer-grid') as maplibregl.GeoJSONSource | undefined;
-    if (src) src.setData(grid);
+    const hover = get(explorerHover);
+    if (hover) {
+      rebuildExplorerGrid(hover.zoneId, hover.ci, hover.cj);
+    } else {
+      rebuildExplorerGrid(null, 0, 0);
+    }
   });
 
   $effect(() => {
@@ -710,50 +715,20 @@
     const visible = $explorerVisible;
     if (!map) return;
     const vis = visible ? 'visible' : 'none';
-    if (map.getLayer('explorer-grid-fill')) map.setLayoutProperty('explorer-grid-fill', 'visibility', vis);
-    if (map.getLayer('explorer-grid-line')) map.setLayoutProperty('explorer-grid-line', 'visibility', vis);
-    if (map.getLayer('explorer-selected-fill')) map.setLayoutProperty('explorer-selected-fill', 'visibility', vis);
-    if (map.getLayer('explorer-selected-line')) map.setLayoutProperty('explorer-selected-line', 'visibility', vis);
-    if (map.getLayer('explorer-tile-grid-line')) map.setLayoutProperty('explorer-tile-grid-line', 'visibility', vis);
+    for (const layerId of ['explorer-shard-line', 'explorer-shard-fill', 'explorer-hover-line', 'explorer-hover-fill', 'explorer-tile-line']) {
+      if (map.getLayer(layerId)) map.setLayoutProperty(layerId, 'visibility', vis);
+    }
   });
 
-  // Sync selected explorer shard highlight (tile grid is shown on hover via mousemove)
+  // When a shard is selected (clicked), rebuild grid with hover on that shard
   $effect(() => {
     const map = $mapInstance;
     const hover = $explorerHover;
     if (!map) return;
-    const src = map.getSource('explorer-selected') as maplibregl.GeoJSONSource | undefined;
-    if (!src) return;
     if (hover) {
-      // Force the tile grid to show for the selected shard
-      const mgr = get(sourceManager);
-      if (mgr) {
-        const corners = mgr.getChunkBoundsLngLat(hover.zoneId, hover.ci, hover.cj);
-        if (corners) {
-          const lngs = corners.map(c => c[0]);
-          const lats = corners.map(c => c[1]);
-          const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-          const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-          const features: GeoJSON.Feature[] = [{
-            type: 'Feature', properties: { kind: 'shard' },
-            geometry: { type: 'Polygon', coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]] },
-          }];
-          const step = 0.1;
-          for (let tLon = Math.floor(minLng / step) * step; tLon < maxLng; tLon += step) {
-            for (let tLat = Math.floor(minLat / step) * step; tLat < maxLat; tLat += step) {
-              features.push({
-                type: 'Feature', properties: { kind: 'tile_grid' },
-                geometry: { type: 'Polygon', coordinates: [[[tLon,tLat],[tLon+step,tLat],[tLon+step,tLat+step],[tLon,tLat+step],[tLon,tLat]]] },
-              });
-            }
-          }
-          src.setData({ type: 'FeatureCollection', features });
-          (src as unknown as { _hoverKey?: string })._hoverKey = `${hover.zoneId}:${hover.ci}_${hover.cj}`;
-          return;
-        }
-      }
+      explorerHoverKey = `${hover.zoneId}:${hover.ci}_${hover.cj}`;
+      rebuildExplorerGrid(hover.zoneId, hover.ci, hover.cj);
     }
-    src.setData({ type: 'FeatureCollection', features: [] });
   });
 </script>
 
