@@ -39,11 +39,23 @@
     probing = false;
   }
 
+  // Auto-probe after a brief pause when selection changes; cancel on new click
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
+
   $effect(() => {
-    const _hover = $explorerHover;
+    const hover = $explorerHover;
+    // Cancel any pending probe
+    clearTimeout(probeTimer);
     probeResults = new Map();
     probeGen++;
     probing = false;
+
+    // Start a new probe after 300ms if a valid shard is selected
+    if (hover && hover.ci >= 0) {
+      probeTimer = setTimeout(() => probeSelectedShard(), 300);
+    }
+
+    return () => clearTimeout(probeTimer);
   });
 
   const selected = $derived($explorerHover);
@@ -111,9 +123,9 @@
         <div class="text-[9px] text-gray-500">Loading zone metadata...</div>
       {/if}
 
-      <!-- Year verification -->
+      <!-- Year verification (auto-probes after 300ms) -->
       {#if probeResults.size > 0}
-        <div class="text-[9px] text-gray-500 uppercase tracking-wider">Years (verified)</div>
+        <div class="text-[9px] text-gray-500 uppercase tracking-wider">Years</div>
         <div class="flex flex-wrap gap-1">
           {#each [...probeResults.entries()] as [year, status]}
             {@const color = YEAR_COLORS[year] ?? '#888'}
@@ -135,16 +147,8 @@
         {#if pending === 0}
           <div class="text-[9px] text-gray-500">{found}/{total} years have data</div>
         {/if}
-      {:else}
-        <button
-          onclick={probeSelectedShard}
-          disabled={probing}
-          class="text-[9px] text-gray-500 hover:text-term-cyan border border-gray-700/60
-                 hover:border-term-cyan/40 px-2 py-1 rounded transition-all
-                 disabled:opacity-40 disabled:pointer-events-none"
-        >
-          {probing ? 'Checking...' : 'Verify years'}
-        </button>
+      {:else if selected && selected.ci >= 0}
+        <div class="text-[9px] text-gray-600 italic">Checking years...</div>
       {/if}
     </div>
   {/if}
