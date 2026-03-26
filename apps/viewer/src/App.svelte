@@ -432,6 +432,13 @@
       if (!mgr) return;
 
       if (tool === 'explorer') {
+        // Debug: check all explorer layers
+        const allLayers = map.getStyle().layers?.map(l => l.id).filter(id => id.startsWith('explorer')) ?? [];
+        console.log('[explorer click]', { point: e.point, lngLat: e.lngLat, layers: allLayers });
+        for (const lid of allLayers) {
+          const f = map.queryRenderedFeatures(e.point, { layers: [lid] });
+          if (f.length > 0) console.log(`  ${lid}: ${f.length} features, kind=${f[0].properties?.kind}`);
+        }
         const features = map.queryRenderedFeatures(e.point, { layers: ['explorer-grid-fill'] });
         if (features.length > 0) {
           const p = features[0].properties!;
@@ -450,12 +457,15 @@
           } else {
             // Clicked a zone boundary — open it to show shard grid
             const zoneId = String(p.zone);
+            console.log(`[explorer] Opening zone ${zoneId}...`);
             (async () => {
               try {
-                await mgr.getSource(zoneId);
-                // Source is now open — set hover to trigger grid rebuild
+                const src = await mgr.getSource(zoneId);
+                console.log(`[explorer] Zone ${zoneId} opened, meta:`, src.metadata ? 'yes' : 'no');
                 explorerHover.set({ zoneId, ci: -1, cj: -1, years: [], utmBounds: [0, 0, 0, 0] });
-              } catch { /* zone failed to open */ }
+              } catch (err) {
+                console.error(`[explorer] Failed to open zone ${zoneId}:`, err);
+              }
             })();
           }
         } else {

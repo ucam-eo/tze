@@ -63,7 +63,7 @@
    * Build the zone boundary grid from zone descriptors (instant, no HTTP).
    * Each zone's WGS84 bbox becomes a polygon feature.
    */
-  function buildZoneGrid() {
+  function buildZoneGrid(hoverOverride?: { zoneId: string; ci: number; cj: number } | null) {
     const myGen = ++gen;
     const map = get(mapInstance);
     const allZones = get(zones);
@@ -91,9 +91,11 @@
 
     // Also add shard grid for any zone that has been opened + selected
     const mgr = get(sourceManager);
-    const hover = get(explorerHover);
+    const hover = hoverOverride !== undefined ? hoverOverride : get(explorerHover);
+    console.log(`[explorer] buildZoneGrid: ${features.length} zones, hover=${hover?.zoneId ?? 'none'}, mgr=${!!mgr}`);
     if (mgr && hover) {
       const src = mgr.getOpenSource(hover.zoneId);
+      console.log(`[explorer] hover zone=${hover.zoneId}, src open=${!!src}, meta=${!!src?.metadata}`);
       if (src) {
         const meta = src.metadata;
         const proj = src.projection;
@@ -173,10 +175,10 @@
     const _zones = $zones;
     const _mgr = $sourceManager;
     const map = $mapInstance;
-    const _hover = $explorerHover;  // rebuild when selection changes
+    const hover = $explorerHover;  // rebuild when selection changes
     if (!map) return;
 
-    untrack(() => buildZoneGrid());
+    untrack(() => buildZoneGrid(hover));
 
     let debounceTimer: ReturnType<typeof setTimeout>;
     const handler = () => {
@@ -189,7 +191,6 @@
       map.off('moveend', handler);
       explorerVisible.set(false);
       explorerGrid.set({ type: 'FeatureCollection', features: [] });
-      explorerHover.set(null);
     };
   });
 
