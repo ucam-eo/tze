@@ -199,18 +199,30 @@
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       });
+      // Invisible fill for click detection
       map.addLayer({
         id: 'explorer-grid-fill',
         type: 'fill',
         source: 'explorer-grid',
-        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.08 },
+        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.06 },
         layout: { visibility: 'none' },
       });
+      // Zone boundaries (wide, dimmer)
       map.addLayer({
-        id: 'explorer-grid-line',
+        id: 'explorer-zone-line',
         type: 'line',
         source: 'explorer-grid',
-        paint: { 'line-color': '#00e5ff', 'line-width': 1.5, 'line-opacity': 0.7 },
+        filter: ['==', ['get', 'kind'], 'zone'],
+        paint: { 'line-color': '#00e5ff', 'line-width': 2, 'line-opacity': 0.6 },
+        layout: { visibility: 'none' },
+      });
+      // Shard grid (thinner, brighter)
+      map.addLayer({
+        id: 'explorer-shard-line',
+        type: 'line',
+        source: 'explorer-grid',
+        filter: ['==', ['get', 'kind'], 'shard'],
+        paint: { 'line-color': '#00e5ff', 'line-width': 1, 'line-opacity': 0.8 },
         layout: { visibility: 'none' },
       });
 
@@ -423,15 +435,28 @@
         const features = map.queryRenderedFeatures(e.point, { layers: ['explorer-grid-fill'] });
         if (features.length > 0) {
           const p = features[0].properties!;
-          const years: number[] = typeof p.years === 'string' ? JSON.parse(p.years) : (p.years ?? []);
-          const ci = typeof p.ci === 'string' ? parseInt(p.ci, 10) : Number(p.ci);
-          const cj = typeof p.cj === 'string' ? parseInt(p.cj, 10) : Number(p.cj);
-          explorerHover.set({
-            zoneId: String(p.zone),
-            ci, cj,
-            years,
-            utmBounds: [0, 0, 0, 0],
-          });
+          const kind = String(p.kind ?? 'zone');
+
+          if (kind === 'shard') {
+            // Clicked a shard — select it for info panel
+            const ci = typeof p.ci === 'string' ? parseInt(p.ci, 10) : Number(p.ci);
+            const cj = typeof p.cj === 'string' ? parseInt(p.cj, 10) : Number(p.cj);
+            explorerHover.set({
+              zoneId: String(p.zone),
+              ci, cj,
+              years: [],
+              utmBounds: [0, 0, 0, 0],
+            });
+          } else {
+            // Clicked a zone boundary — open it to show shard grid
+            const zoneId = String(p.zone);
+            const dm = get(displayManager);
+            if (dm) {
+              dm.getDisplaySource(zoneId);  // opens source async
+              // Set hover to zone with ci/cj=0 to trigger grid rebuild
+              explorerHover.set({ zoneId, ci: 0, cj: 0, years: [], utmBounds: [0, 0, 0, 0] });
+            }
+          }
         } else {
           explorerHover.set(null);
         }
@@ -617,8 +642,9 @@
     const visible = $explorerVisible;
     if (!map) return;
     const vis = visible ? 'visible' : 'none';
-    if (map.getLayer('explorer-grid-fill')) map.setLayoutProperty('explorer-grid-fill', 'visibility', vis);
-    if (map.getLayer('explorer-grid-line')) map.setLayoutProperty('explorer-grid-line', 'visibility', vis);
+    for (const lid of ['explorer-grid-fill', 'explorer-zone-line', 'explorer-shard-line']) {
+      if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis);
+    }
   });
 </script>
 

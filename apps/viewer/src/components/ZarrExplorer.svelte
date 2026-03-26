@@ -10,11 +10,12 @@
   let featureCount = $state(0);
   let overflow = $state(false);
   let gridError = $state<string | null>(null);
+  let selectedZoneShards = $state(0);
 
-  const MAX_FEATURES = 3000;
+  const MAX_FEATURES = 5000;
   let gen = 0;
 
-  // Year probe state — only triggered by button click
+  // Year probe state
   let probeResults = $state<Map<number, 'pending' | 'found' | 'missing'>>(new Map());
   let probeGen = 0;
   let probing = $state(false);
@@ -50,113 +51,141 @@
     probing = false;
   }
 
-  // Clear probe results when selection changes
   $effect(() => {
     const _hover = $explorerHover;
     probeResults = new Map();
     probeGen++;
     probing = false;
+    selectedZoneShards = 0;
   });
 
-  async function buildVisibleGrid() {
+  /**
+   * Build the zone boundary grid from zone descriptors (instant, no HTTP).
+   * Each zone's WGS84 bbox becomes a polygon feature.
+   */
+  function buildZoneGrid() {
     const myGen = ++gen;
-    const mgr = get(sourceManager);
     const map = get(mapInstance);
-    if (!mgr || !map) return;
+    const allZones = get(zones);
+    if (!map || !allZones.length) return;
 
-    overflow = false;
-    gridError = null;
+    const bounds = map.getBounds();
+    const vW = bounds.getWest(), vE = bounds.getEast();
+    const vS = bounds.getSouth(), vN = bounds.getNorth();
+    const features: Feature[] = [];
 
-    try {
-      const bounds = map.getBounds();
-      const vW = bounds.getWest(), vE = bounds.getEast();
-      const vS = bounds.getSouth(), vN = bounds.getNorth();
-      const allZones = get(zones);
-      const features: Feature[] = [];
+    for (const zone of allZones) {
+      const [zW, zS, zE, zN] = zone.bbox;
+      if (zE < vW || zW > vE || zN < vS || zS > vN) continue;
+      if (features.length >= MAX_FEATURES) { overflow = true; break; }
 
-      for (const zone of allZones) {
-        if (myGen !== gen) return;
+      // Clip bbox to viewport for display
+      const w = Math.max(zW, vW), e = Math.min(zE, vE);
+      const s = Math.max(zS, vS), n = Math.min(zN, vN);
 
-        const [zW, zS, zE, zN] = zone.bbox;
-        if (zE < vW || zW > vE || zN < vS || zS > vN) continue;
+      features.push({
+        type: 'Feature',
+        properties: { zone: zone.id, utmZone: zone.utmZone, kind: 'zone' },
+        geometry: {
+          type: 'Polygon',
+          coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]],
+        },
+      });
+    }
 
-        // Only use already-open sources — no network requests during grid build
-        const src = mgr.getOpenSource(zone.id);
-        if (!src) continue;
+    // Also add shard grid for any zone that has been opened + selected
+    const mgr = get(sourceManager);
+    const hover = get(explorerHover);
+    if (mgr && hover) {
+      const src = mgr.getOpenSource(hover.zoneId);
+      if (src) {
         const meta = src.metadata;
         const proj = src.projection;
-        if (!meta || !proj) continue;
+        if (meta && proj) {
+          const [H, W] = meta.shape;
+          const [shardH, shardW] = meta.chunkShape;
+          const nRows = Math.ceil(H / shardH);
+          const nCols = Math.ceil(W / shardW);
+          const t = meta.transform;
+          const px = t[0];
+          const originE = t[2];
+          const originN = t[5];
+          const shardM = shardH * px;
 
-        const [H, W] = meta.shape;
-        const [shardH, shardW] = meta.chunkShape;
-        const nRows = Math.ceil(H / shardH);
-        const nCols = Math.ceil(W / shardW);
-        const t = meta.transform;
-        const px = t[0];
-        const originE = t[2];
-        const originN = t[5];
-        const shardM = shardH * px;
+          // Only show shards in viewport
+          const utmCorners = [
+            proj.forward(Math.max(vW, meta.transform[2] > 0 ? vW : vW), Math.max(vS, -80)),
+            proj.forward(Math.min(vE, 180), Math.min(vN, 84)),
+          ];
+          // Simple approach: iterate visible shards
+          const clampLng = (v: number) => {
+            const zone = get(zones).find(z => z.id === hover.zoneId);
+            if (!zone) return v;
+            return Math.max(zone.bbox[0], Math.min(zone.bbox[2], v));
+          };
+          const clampLat = (v: number) => {
+            const zone = get(zones).find(z => z.id === hover.zoneId);
+            if (!zone) return v;
+            return Math.max(zone.bbox[1], Math.min(zone.bbox[3], v));
+          };
+          const uc = [
+            proj.forward(clampLng(vW), clampLat(vN)),
+            proj.forward(clampLng(vE), clampLat(vN)),
+            proj.forward(clampLng(vW), clampLat(vS)),
+            proj.forward(clampLng(vE), clampLat(vS)),
+          ];
+          const minE = Math.min(...uc.map(c => c[0]));
+          const maxE = Math.max(...uc.map(c => c[0]));
+          const minN = Math.min(...uc.map(c => c[1]));
+          const maxN = Math.max(...uc.map(c => c[1]));
 
-        const clampLng = (v: number) => Math.max(zW, Math.min(zE, v));
-        const clampLat = (v: number) => Math.max(zS, Math.min(zN, v));
-        const utmCorners = [
-          proj.forward(clampLng(vW), clampLat(vN)),
-          proj.forward(clampLng(vE), clampLat(vN)),
-          proj.forward(clampLng(vW), clampLat(vS)),
-          proj.forward(clampLng(vE), clampLat(vS)),
-        ];
-        const minE = Math.min(...utmCorners.map(c => c[0]));
-        const maxE = Math.max(...utmCorners.map(c => c[0]));
-        const minN = Math.min(...utmCorners.map(c => c[1]));
-        const maxN = Math.max(...utmCorners.map(c => c[1]));
+          const cjMin = Math.max(0, Math.floor((minE - originE) / shardM));
+          const cjMax = Math.min(nCols - 1, Math.floor((maxE - originE) / shardM));
+          const ciMin = Math.max(0, Math.floor((originN - maxN) / shardM));
+          const ciMax = Math.min(nRows - 1, Math.floor((originN - minN) / shardM));
 
-        const cjMin = Math.max(0, Math.floor((minE - originE) / shardM));
-        const cjMax = Math.min(nCols - 1, Math.floor((maxE - originE) / shardM));
-        const ciMin = Math.max(0, Math.floor((originN - maxN) / shardM));
-        const ciMax = Math.min(nRows - 1, Math.floor((originN - minN) / shardM));
-
-        for (let ci = ciMin; ci <= ciMax; ci++) {
-          for (let cj = cjMin; cj <= cjMax; cj++) {
-            if (features.length >= MAX_FEATURES) { overflow = true; break; }
-            const corners = src.getChunkBoundsLngLat(ci, cj);
-            if (!corners) continue;
-            features.push({
-              type: 'Feature',
-              properties: { zone: zone.id, ci, cj, years: JSON.stringify(meta.years ?? []) },
-              geometry: {
-                type: 'Polygon',
-                coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
-              },
-            });
+          let shardCount = 0;
+          for (let ci = ciMin; ci <= ciMax; ci++) {
+            for (let cj = cjMin; cj <= cjMax; cj++) {
+              if (features.length >= MAX_FEATURES) break;
+              const corners = src.getChunkBoundsLngLat(ci, cj);
+              if (!corners) continue;
+              features.push({
+                type: 'Feature',
+                properties: { zone: hover.zoneId, ci, cj, kind: 'shard' },
+                geometry: {
+                  type: 'Polygon',
+                  coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
+                },
+              });
+              shardCount++;
+            }
           }
-          if (overflow) break;
+          selectedZoneShards = shardCount;
         }
-        if (overflow) break;
-      }
-
-      if (myGen !== gen) return;
-      featureCount = features.length;
-      explorerGrid.set({ type: 'FeatureCollection', features });
-      explorerVisible.set(true);
-    } catch (err) {
-      if (myGen === gen) {
-        gridError = err instanceof Error ? err.message : String(err);
       }
     }
+
+    if (myGen !== gen) return;
+    featureCount = features.length;
+    explorerGrid.set({ type: 'FeatureCollection', features });
+    explorerVisible.set(true);
   }
 
   // Build grid on activation and on map move
   $effect(() => {
-    const mgr = $sourceManager;
+    const _zones = $zones;
+    const _mgr = $sourceManager;
     const map = $mapInstance;
-    if (!mgr || !map) return;
+    const _hover = $explorerHover;  // rebuild when selection changes
+    if (!map) return;
 
-    untrack(() => buildVisibleGrid());
+    untrack(() => buildZoneGrid());
 
     let debounceTimer: ReturnType<typeof setTimeout>;
     const handler = () => {
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => buildVisibleGrid(), 150);
+      debounceTimer = setTimeout(() => buildZoneGrid(), 150);
     };
     map.on('moveend', handler);
     return () => {
@@ -177,27 +206,8 @@
 
 <div class="space-y-3" data-tutorial="explorer-panel">
   <div class="text-[10px] text-gray-500">
-    Click a shard on the map to see its details.
-    Hover over a shard when zoomed in to see 0.1° tile boundaries.
+    Click a zone to load its shard grid. Click a shard for details.
   </div>
-
-  <!-- Store-level metadata -->
-  {#if $sourceManager}
-    {@const activeSources = $sourceManager.getActiveSources?.()}
-    {#if activeSources && activeSources.size > 0}
-      {@const firstSrc = [...activeSources.values()][0]}
-      {@const m = firstSrc?.metadata}
-      {#if m}
-        <div class="text-[9px] text-gray-500 space-y-0.5 border-b border-gray-800/40 pb-2">
-          <div><span class="text-gray-400">Version</span> {m.version}</div>
-          {#if m.years && m.years.length > 0}
-            <div><span class="text-gray-400">Years</span> {m.years[0]}–{m.years[m.years.length-1]} ({m.years.length})</div>
-          {/if}
-          <div><span class="text-gray-400">Zones</span> {activeSources.size} loaded</div>
-        </div>
-      {/if}
-    {/if}
-  {/if}
 
   {#if gridError}
     <div class="text-[9px] text-red-400 break-all">{gridError}</div>
@@ -205,12 +215,15 @@
 
   {#if featureCount > 0}
     <div class="text-[10px] text-gray-400">
-      <span class="text-gray-300 font-bold">{featureCount}</span> shard{featureCount !== 1 ? 's' : ''} in view
+      <span class="text-gray-300 font-bold">{featureCount}</span> feature{featureCount !== 1 ? 's' : ''} in view
+      {#if selectedZoneShards > 0}
+        <span class="text-gray-500">({selectedZoneShards} shards)</span>
+      {/if}
     </div>
   {/if}
 
   {#if overflow}
-    <div class="text-[9px] text-yellow-500/80">Zoom in to see all shards</div>
+    <div class="text-[9px] text-yellow-500/80">Zoom in to see all features</div>
   {/if}
 
   <!-- Selected shard info -->
@@ -259,14 +272,16 @@
             <span class="text-gray-400 text-[8px] break-all">
               <a href="{baseUrl}/embeddings/c/{latestT}/{selected.ci}/{selected.cj}"
                  target="_blank" class="text-term-cyan/60 hover:text-term-cyan underline">
-                embeddings/c/{latestT}/{selected.ci}/{selected.cj}
+                c/{latestT}/{selected.ci}/{selected.cj}
               </a>
             </span>
           {/if}
         </div>
+      {:else}
+        <div class="text-[9px] text-gray-500">Loading zone metadata...</div>
       {/if}
 
-      <!-- Year verification — on-demand -->
+      <!-- Year verification -->
       {#if probeResults.size > 0}
         <div class="text-[9px] text-gray-500 uppercase tracking-wider">Years (verified)</div>
         <div class="flex flex-wrap gap-1">
@@ -303,21 +318,6 @@
       {/if}
     </div>
   {:else if featureCount > 0}
-    <div class="text-[9px] text-gray-600 italic">No shard selected</div>
-  {/if}
-
-  <!-- Year legend -->
-  {#if featureCount > 0}
-    <div class="space-y-1 pt-1 border-t border-gray-800/60">
-      <div class="text-[9px] text-gray-600 uppercase tracking-wider">Year legend</div>
-      <div class="flex flex-wrap gap-x-2 gap-y-0.5">
-        {#each yearEntries as { year, color }}
-          <div class="flex items-center gap-1 text-[9px]">
-            <span class="inline-block w-2 h-2 rounded-sm" style="background: {color}"></span>
-            <span class="text-gray-400">{year}</span>
-          </div>
-        {/each}
-      </div>
-    </div>
+    <div class="text-[9px] text-gray-600 italic">Click a zone boundary to explore</div>
   {/if}
 </div>
