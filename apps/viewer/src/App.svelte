@@ -21,7 +21,7 @@
   import { zones } from './stores/stac';
   import { pointInBbox } from './lib/stac';
   import { segmentPolygons, segmentVisible } from './stores/segmentation';
-  import { explorerHover } from './stores/zarr-explorer';
+  import { explorerHover, explorerTileEmb } from './stores/zarr-explorer';
   import UmapCloud from './components/UmapCloud.svelte';
   import TutorialOverlay from './components/TutorialOverlay.svelte';
   import { simEmbeddingTileCount, simSelectedPixel } from './stores/similarity';
@@ -68,6 +68,153 @@
     const layers = map.getStyle().layers;
     const bottomLayerId = layers.length > 0 ? layers[0].id : undefined;
     map.addLayer({ id: 'basemap', type: 'raster', source: 'basemap' }, bottomLayerId);
+  }
+
+  // --- Animated radial fingerprint ---
+  // Display values lerp towards target for smooth morphing between pixels
+  let fpDisplay: Float32Array | null = null;    // current animated values (normalised)
+  let fpTarget: Float32Array | null = null;     // target values (normalised)
+  let fpTargetNorm = 0;
+  let fpNBands = 0;
+  let fpAnimId: number | null = null;
+  let fpVisible = false;
+  let fpMouseX = 0, fpMouseY = 0;
+
+  const FP_LERP = 0.15; // per-frame lerp factor (0 = frozen, 1 = instant)
+  const FP_S = 120;
+  const FP_CX = FP_S / 2, FP_CY = FP_S / 2;
+  const FP_MAX_R = 52;
+
+  function setFingerprintTarget(embedding: Float32Array) {
+    const n = embedding.length;
+    let maxAbs = 0, normSq = 0;
+    for (let i = 0; i < n; i++) {
+      const a = Math.abs(embedding[i]);
+      if (a > maxAbs) maxAbs = a;
+      normSq += embedding[i] * embedding[i];
+    }
+    if (maxAbs === 0) return;
+
+    fpNBands = n;
+    fpTargetNorm = Math.sqrt(normSq);
+
+    if (!fpTarget || fpTarget.length !== n) {
+      fpTarget = new Float32Array(n);
+      fpDisplay = new Float32Array(n);
+      // Initialise display to target (no morph on first show)
+      for (let i = 0; i < n; i++) fpDisplay[i] = fpTarget[i] = embedding[i] / maxAbs;
+    } else {
+      for (let i = 0; i < n; i++) fpTarget[i] = embedding[i] / maxAbs;
+    }
+
+    fpVisible = true;
+    if (fpAnimId == null) fpAnimId = requestAnimationFrame(fpAnimate);
+  }
+
+  function stopFingerprint() {
+    fpVisible = false;
+  }
+
+  function fpAnimate() {
+    fpAnimId = null;
+    if (!fpVisible || !fpDisplay || !fpTarget) return;
+
+    // Lerp display towards target
+    let maxDelta = 0;
+    for (let i = 0; i < fpNBands; i++) {
+      const d = fpTarget[i] - fpDisplay[i];
+      fpDisplay[i] += d * FP_LERP;
+      const ad = Math.abs(d);
+      if (ad > maxDelta) maxDelta = ad;
+    }
+
+    fpRender();
+
+    // Keep animating while there's visible difference
+    if (maxDelta > 0.001 || fpVisible) {
+      fpAnimId = requestAnimationFrame(fpAnimate);
+    }
+  }
+
+  function fpRender() {
+    if (!fpDisplay) return;
+    const canvas = document.getElementById('emb-fingerprint-canvas') as HTMLCanvasElement;
+    const label = document.getElementById('emb-fingerprint-label') as HTMLElement;
+    const el = document.getElementById('emb-fingerprint');
+    if (!canvas || !el) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const S = FP_S, cx = FP_CX, cy = FP_CY, maxR = FP_MAX_R;
+    const n = fpNBands;
+    const tau = Math.PI * 2;
+
+    ctx.clearRect(0, 0, S, S);
+
+    // Concentric rings
+    ctx.strokeStyle = 'rgba(0, 229, 255, 0.06)';
+    ctx.lineWidth = 0.5;
+    for (const r of [15, 30, 45]) {
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, tau); ctx.stroke();
+    }
+
+    // Filled polygon
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const angle = (i / n) * tau - Math.PI / 2;
+      const r = Math.abs(fpDisplay[i]) * maxR;
+      const x = cx + Math.cos(angle) * r;
+      const y = cy + Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0, 229, 255, 0.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+
+    // Spokes
+    for (let i = 0; i < n; i++) {
+      const angle = (i / n) * tau - Math.PI / 2;
+      const v = fpDisplay[i];
+      const r = Math.abs(v) * maxR;
+      const hue = ((i / n) * 270 + 180) % 360;
+      const alpha = 0.3 + Math.abs(v) * 0.5;
+      ctx.strokeStyle = `hsla(${hue}, 70%, 55%, ${alpha})`;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
+      ctx.stroke();
+    }
+
+    // Centre dot
+    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 5);
+    glow.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
+    glow.addColorStop(0.4, 'rgba(0, 229, 255, 0.5)');
+    glow.addColorStop(1, 'rgba(0, 229, 255, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(cx, cy, 5, 0, tau); ctx.fill();
+
+    // Label
+    if (label) label.textContent = `${n}d  norm ${fpTargetNorm.toFixed(1)}`;
+
+    // Position
+    el.style.display = 'block';
+    el.style.left = `${fpMouseX + 16}px`;
+    el.style.top = `${fpMouseY - 70}px`;
+  }
+
+  /** Set new fingerprint target and update mouse position. */
+  function renderFingerprintTooltip(el: HTMLElement, embedding: Float32Array, mx: number, my: number) {
+    fpMouseX = mx;
+    fpMouseY = my;
+    setFingerprintTarget(embedding);
+    // Position immediately even if animation hasn't caught up
+    el.style.display = 'block';
+    el.style.left = `${mx + 16}px`;
+    el.style.top = `${my - 70}px`;
   }
 
   onMount(() => {
@@ -130,6 +277,47 @@
           'line-width': 2,
           'line-opacity': 0.9,
           'line-opacity-transition': { duration: 200 },
+        },
+      });
+
+      // Pixel hover highlight (explorer mode — single pixel box)
+      // Pixel hover highlight (explorer mode — animated glow)
+      map.addSource('pixel-hover', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      // Outer glow (wide, soft)
+      map.addLayer({
+        id: 'pixel-hover-glow',
+        type: 'line',
+        source: 'pixel-hover',
+        paint: {
+          'line-color': '#00e5ff',
+          'line-width': 8,
+          'line-opacity': 0.15,
+          'line-blur': 6,
+          'line-opacity-transition': { duration: 300 },
+        },
+      });
+      map.addLayer({
+        id: 'pixel-hover-fill',
+        type: 'fill',
+        source: 'pixel-hover',
+        paint: {
+          'fill-color': '#00e5ff',
+          'fill-opacity': 0.15,
+          'fill-opacity-transition': { duration: 300 },
+        },
+      });
+      map.addLayer({
+        id: 'pixel-hover-line',
+        type: 'line',
+        source: 'pixel-hover',
+        paint: {
+          'line-color': '#00e5ff',
+          'line-width': 2,
+          'line-opacity': 0.9,
+          'line-opacity-transition': { duration: 300 },
         },
       });
 
@@ -278,6 +466,8 @@
     // Track hovered chunk to avoid redundant updates
     let hoveredChunkKey = '';
     let hoverFadeTimer: ReturnType<typeof setTimeout> | undefined;
+    // Track hovered pixel for explorer fingerprint
+    let hoveredPixelKey = '';
 
     // Coordinates display + tile hover highlight
     map.on('mousemove', (e) => {
@@ -322,6 +512,74 @@
             hoverFadeTimer = setTimeout(() => {
               hoverSource.setData({ type: 'FeatureCollection', features: [] });
             }, 250);
+          }
+        }
+      }
+
+      // Embedding fingerprint tooltip + pixel highlight (explorer mode)
+      const fpEl = document.getElementById('emb-fingerprint');
+      const pixSrc = map.getSource('pixel-hover') as maplibregl.GeoJSONSource | undefined;
+      if (fpEl) {
+        let shown = false;
+        const tile = get(explorerTileEmb);
+        if (get(activeTool) === 'explorer' && mgr && tile) {
+          const src = mgr.getOpenSource(tile.zoneId);
+          if (src?.metadata && src.projection) {
+            const meta = src.metadata;
+            const [easting, northing] = src.projection.forward(e.lngLat.lng, e.lngLat.lat);
+            const tf = meta.transform;
+            const globalCol = Math.floor((easting - tf[2]) / tf[0]);
+            const globalRow = Math.floor((tf[5] - northing) / tf[0]);
+            const cs = meta.chunkShape;
+            const ci = Math.floor(globalRow / cs[0]);
+            const cj = Math.floor(globalCol / cs[1]);
+            if (ci === tile.ci && cj === tile.cj) {
+              const row = globalRow - ci * cs[0];
+              const col = globalCol - cj * cs[1];
+              if (row >= 0 && row < tile.tileH && col >= 0 && col < tile.tileW) {
+                const pixIdx = row * tile.tileW + col;
+                const off = pixIdx * tile.nBands;
+                if (!isNaN(tile.emb[off])) {
+                  const embedding = tile.emb.slice(off, off + tile.nBands);
+                  renderFingerprintTooltip(fpEl, embedding, e.originalEvent.clientX, e.originalEvent.clientY);
+                  shown = true;
+                  // Update pixel highlight box with pulse on change
+                  const pxKey = `${ci}:${cj}:${row}:${col}`;
+                  if (pxKey !== hoveredPixelKey && pixSrc) {
+                    hoveredPixelKey = pxKey;
+                    const corners = src.getPixelBoundsLngLat(ci, cj, row, col);
+                    if (corners) {
+                      pixSrc.setData({
+                        type: 'FeatureCollection',
+                        features: [{
+                          type: 'Feature', properties: {},
+                          geometry: { type: 'Polygon', coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]] },
+                        }],
+                      });
+                      // Flash bright on pixel change then fade back
+                      map.setPaintProperty('pixel-hover-fill', 'fill-opacity', 0.4);
+                      map.setPaintProperty('pixel-hover-line', 'line-opacity', 1.0);
+                      map.setPaintProperty('pixel-hover-glow', 'line-opacity', 0.4);
+                      setTimeout(() => {
+                        if (map.getLayer('pixel-hover-fill')) {
+                          map.setPaintProperty('pixel-hover-fill', 'fill-opacity', 0.15);
+                          map.setPaintProperty('pixel-hover-line', 'line-opacity', 0.9);
+                          map.setPaintProperty('pixel-hover-glow', 'line-opacity', 0.15);
+                        }
+                      }, 50);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (!shown) {
+          stopFingerprint();
+          fpEl.style.display = 'none';
+          if (hoveredPixelKey && pixSrc) {
+            hoveredPixelKey = '';
+            pixSrc.setData({ type: 'FeatureCollection', features: [] });
           }
         }
       }
@@ -379,6 +637,12 @@
     // Fade out hover when mouse leaves the map
     map.on('mouseout', () => {
       hoveredChunkKey = '';
+      hoveredPixelKey = '';
+      stopFingerprint();
+      const fpEl = document.getElementById('emb-fingerprint');
+      if (fpEl) fpEl.style.display = 'none';
+      const pixSrc = map.getSource('pixel-hover') as maplibregl.GeoJSONSource | undefined;
+      if (pixSrc) pixSrc.setData({ type: 'FeatureCollection', features: [] });
       // Fade opacity to 0 via transitions
       map.setPaintProperty('tile-hover-fill', 'fill-opacity', 0);
       map.setPaintProperty('tile-hover-line-outer', 'line-opacity', 0);
@@ -660,4 +924,17 @@
             border border-gray-700/50 z-50 pointer-events-none
             shadow-lg shadow-black/40 whitespace-nowrap"
      style="display: none">
+</div>
+
+<!-- Embedding fingerprint tooltip (explorer mode, follows mouse) -->
+<div id="emb-fingerprint"
+     class="fixed z-50 pointer-events-none"
+     style="display: none">
+  <canvas id="emb-fingerprint-canvas" width="120" height="120"
+          style="border-radius: 50%; box-shadow: 0 0 16px rgba(0,229,255,0.25), 0 0 4px rgba(0,229,255,0.4); background: rgba(0,2,8,0.55); border: 1px solid rgba(0,229,255,0.25);">
+  </canvas>
+  <div id="emb-fingerprint-label"
+       class="text-center text-[8px] text-gray-500 font-mono mt-1"
+       style="text-shadow: 0 0 4px rgba(0,229,255,0.3);">
+  </div>
 </div>

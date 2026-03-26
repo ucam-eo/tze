@@ -1,5 +1,16 @@
 import { writable } from 'svelte/store';
 
+/** Cached tile embedding buffer for per-pixel fingerprint lookups on mousemove. */
+export const explorerTileEmb = writable<{
+  zoneId: string;
+  ci: number;
+  cj: number;
+  emb: Float32Array;
+  nBands: number;
+  tileW: number;
+  tileH: number;
+} | null>(null);
+
 export const explorerHover = writable<{
   zoneId: string;
   ci: number;

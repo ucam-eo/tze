@@ -1,6 +1,6 @@
 <script lang="ts">
   import { sourceManager } from '../stores/zarr';
-  import { explorerHover, YEAR_COLORS } from '../stores/zarr-explorer';
+  import { explorerHover, explorerTileEmb, YEAR_COLORS } from '../stores/zarr-explorer';
   import { get } from 'svelte/store';
 
   // Year probe state
@@ -41,7 +41,13 @@
     if (region) {
       const tIdx = (hover.ci - region.ciMin) * region.gridCols + (hover.cj - region.cjMin);
       if (tIdx >= 0 && tIdx < region.loaded.length && region.loaded[tIdx]) {
-        computeStatsFromBuffer(region.emb, tIdx, region.tileW * region.tileH, region.nBands);
+        // Extract tile embedding for pixel lookup
+        const tilePixels = region.tileW * region.tileH;
+        const base = tIdx * tilePixels * region.nBands;
+        const tileEmb = region.emb.slice(base, base + tilePixels * region.nBands);
+        $explorerTileEmb = { zoneId: hover.zoneId, ci: hover.ci, cj: hover.cj,
+          emb: tileEmb, nBands: region.nBands, tileW: region.tileW, tileH: region.tileH };
+        computeStatsFromBuffer(region.emb, tIdx, tilePixels, region.nBands);
         return;
       }
     }
@@ -102,6 +108,8 @@
       }
 
       if (myGen === tileStatsGen) {
+        $explorerTileEmb = { zoneId: hover.zoneId, ci: hover.ci, cj: hover.cj,
+          emb, nBands, tileW: cs[1], tileH: cs[0] };
         computeStatsFromBuffer(emb, 0, tilePixels, nBands);
       }
     } catch { /* fetch failed */ }
@@ -287,6 +295,7 @@
     tileStats = null;
     tileStatsGen++;
     tileStatsLoading = false;
+    $explorerTileEmb = null;
     if (hover && hover.ci >= 0) {
       computeTileStats();
       probeTimer = setTimeout(() => probeSelectedShard(), 300);
