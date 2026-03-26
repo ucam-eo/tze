@@ -8,7 +8,6 @@
   import LabelPanel from './LabelPanel.svelte';
   import SegmentPanel from './SegmentPanel.svelte';
   import ZarrExplorer from './ZarrExplorer.svelte';
-  import { explorerVisible } from '../stores/zarr-explorer';
 
   const enabled = $derived(!!$metadata);
 
@@ -20,11 +19,9 @@
     const tool = $activeTool;
     if (prevTool !== null && prevTool !== tool) {
       if (prevTool === 'segmenter') segmentVisible.set(false);
-      if (prevTool === 'explorer') explorerVisible.set(false);
       get(displayManager)?.clearClassificationOverlays();
       if (tool === 'segmenter') segmentVisible.set(true);
       if (tool === 'explorer') {
-        explorerVisible.set(true);
         roiDrawing.set(false);  // disable selection in explorer mode
       } else {
         roiDrawing.set(true);   // re-enable selection in other modes

@@ -21,7 +21,7 @@
   import { zones } from './stores/stac';
   import { pointInBbox } from './lib/stac';
   import { segmentPolygons, segmentVisible } from './stores/segmentation';
-  import { explorerGrid, explorerVisible, explorerHover } from './stores/zarr-explorer';
+  import { explorerHover } from './stores/zarr-explorer';
   import UmapCloud from './components/UmapCloud.svelte';
   import TutorialOverlay from './components/TutorialOverlay.svelte';
   import { simEmbeddingTileCount, simSelectedPixel } from './stores/similarity';
@@ -191,49 +191,6 @@
         type: 'line',
         source: 'roi-regions',
         paint: { 'line-color': '#00e5ff', 'line-width': 2, 'line-opacity': 0.9, 'line-dasharray': [4, 2] },
-      });
-
-      // Explorer shard grid overlay
-      // Explorer shard grid — simple: one source, line + fill layers, no filters
-      map.addSource('explorer-grid', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features: [] },
-      });
-      // Zone fill for click detection (zones only, not shards)
-      map.addLayer({
-        id: 'explorer-grid-fill',
-        type: 'fill',
-        source: 'explorer-grid',
-        filter: ['==', ['get', 'kind'], 'zone'],
-        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.1 },
-        layout: { visibility: 'none' },
-      });
-      // Shard fill for click detection
-      map.addLayer({
-        id: 'explorer-shard-fill',
-        type: 'fill',
-        source: 'explorer-grid',
-        filter: ['==', ['get', 'kind'], 'shard'],
-        paint: { 'fill-color': '#ffab00', 'fill-opacity': 0.05 },
-        layout: { visibility: 'none' },
-      });
-      // Zone boundaries (wide, dimmer)
-      map.addLayer({
-        id: 'explorer-zone-line',
-        type: 'line',
-        source: 'explorer-grid',
-        filter: ['==', ['get', 'kind'], 'zone'],
-        paint: { 'line-color': '#00e5ff', 'line-width': 2, 'line-opacity': 0.6 },
-        layout: { visibility: 'none' },
-      });
-      // Shard grid (yellow, thick, very visible)
-      map.addLayer({
-        id: 'explorer-shard-line',
-        type: 'line',
-        source: 'explorer-grid',
-        filter: ['==', ['get', 'kind'], 'shard'],
-        paint: { 'line-color': '#ffab00', 'line-width': 2, 'line-opacity': 0.9 },
-        layout: { visibility: 'none' },
       });
 
       // Similarity reference pixel marker
@@ -442,35 +399,28 @@
       if (!mgr) return;
 
       if (tool === 'explorer') {
-        const features = map.queryRenderedFeatures(e.point, { layers: ['explorer-shard-fill', 'explorer-grid-fill'] });
-        if (features.length > 0) {
-          const p = features[0].properties!;
-          const kind = String(p.kind ?? 'zone');
-
-          if (kind === 'shard') {
-            // Clicked a shard — select it for info panel
-            const ci = typeof p.ci === 'string' ? parseInt(p.ci, 10) : Number(p.ci);
-            const cj = typeof p.cj === 'string' ? parseInt(p.cj, 10) : Number(p.cj);
-            explorerHover.set({
-              zoneId: String(p.zone),
-              ci, cj,
-              years: [],
-              utmBounds: [0, 0, 0, 0],
-            });
-          } else {
-            // Clicked a zone boundary — open it to show shard grid
-            const zoneId = String(p.zone);
-            (async () => {
-              try {
-                await mgr.getSource(zoneId);
-                const hoverVal = { zoneId, ci: -1, cj: -1, years: [] as number[], utmBounds: [0, 0, 0, 0] as [number, number, number, number] };
-                explorerHover.set(hoverVal);
-              } catch { /* zone failed to open */ }
-            })();
-          }
-        } else {
-          explorerHover.set(null);
-        }
+        const lng = e.lngLat.lng;
+        const lat = e.lngLat.lat;
+        // Find which zone the click falls in
+        const allZones = get(zones);
+        const zone = allZones.find(z => pointInBbox(lng, lat, z.bbox));
+        if (!zone) { explorerHover.set(null); return; }
+        (async () => {
+          try {
+            const src = await mgr.getSource(zone.id);
+            const chunk = mgr.getChunkAtLngLat(lng, lat);
+            if (chunk && chunk.zoneId === zone.id) {
+              explorerHover.set({
+                zoneId: zone.id,
+                ci: chunk.ci, cj: chunk.cj,
+                years: [],
+                utmBounds: [0, 0, 0, 0],
+              });
+            } else {
+              explorerHover.set({ zoneId: zone.id, ci: -1, cj: -1, years: [], utmBounds: [0, 0, 0, 0] });
+            }
+          } catch { explorerHover.set(null); }
+        })();
         return;
       }
 
@@ -637,26 +587,6 @@
     }
   });
 
-  // Sync explorer grid data and visibility to map
-  // Sync explorer grid data to map source
-  $effect(() => {
-    const map = $mapInstance;
-    const grid = $explorerGrid;
-    if (!map) return;
-    const src = map.getSource('explorer-grid') as maplibregl.GeoJSONSource | undefined;
-    if (src) src.setData(grid);
-  });
-
-  // Sync explorer visibility
-  $effect(() => {
-    const map = $mapInstance;
-    const visible = $explorerVisible;
-    if (!map) return;
-    const vis = visible ? 'visible' : 'none';
-    for (const lid of ['explorer-grid-fill', 'explorer-shard-fill', 'explorer-zone-line', 'explorer-shard-line']) {
-      if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis);
-    }
-  });
 </script>
 
 <div bind:this={mapContainer} id="map"></div>
