@@ -50,12 +50,8 @@
     if (!gridSrc) return;
 
     const currentGrid = get(explorerGrid);
-    const features: GeoJSON.Feature[] = [];
-
-    // Shard features
-    for (const f of currentGrid.features) {
-      features.push({ ...f, properties: { ...f.properties, kind: 'shard' } });
-    }
+    // Shard features already have kind='shard' from buildVisibleGrid
+    const features: GeoJSON.Feature[] = [...currentGrid.features];
 
     // Hover highlight + tile grid for hovered shard
     if (hoverZone) {
