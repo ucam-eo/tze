@@ -92,10 +92,8 @@
     // Also add shard grid for any zone that has been opened + selected
     const mgr = get(sourceManager);
     const hover = hoverOverride !== undefined ? hoverOverride : get(explorerHover);
-    console.log(`[explorer] buildZoneGrid: ${features.length} zones, hover=${hover?.zoneId ?? 'none'}, mgr=${!!mgr}`);
     if (mgr && hover) {
       const src = mgr.getOpenSource(hover.zoneId);
-      console.log(`[explorer] hover zone=${hover.zoneId}, src open=${!!src}, meta=${!!src?.metadata}`);
       if (src) {
         const meta = src.metadata;
         const proj = src.projection;
