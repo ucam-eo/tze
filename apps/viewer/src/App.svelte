@@ -295,8 +295,10 @@
         }
       });
 
-      // Start with rectangle drawing active by default
-      roiDrawing.set(true);
+      // Start with drawing active only if not in explorer mode
+      if (get(activeTool) !== 'explorer') {
+        roiDrawing.set(true);
+      }
 
       // 3D buildings — visible when map is pitched, at zoom >= 15
       map.addSource('buildings-3d-src', {
@@ -533,7 +535,9 @@
     const map = $mapInstance;
     if (!map) return;
     const canvas = map.getCanvasContainer();
-    if ($roiDrawing) {
+    if ($activeTool === 'explorer') {
+      canvas.style.cursor = 'pointer';
+    } else if ($roiDrawing) {
       canvas.style.cursor = 'crosshair';
     } else if ($activeTool === 'similarity') {
       canvas.style.cursor = 'cell';

@@ -2,6 +2,7 @@
   import { activeTool, type ToolId } from '../stores/tools';
   import { displayManager, metadata } from '../stores/zarr';
   import { segmentVisible } from '../stores/segmentation';
+  import { roiDrawing } from '../stores/drawing';
   import { get } from 'svelte/store';
   import SimilaritySearch from './SimilaritySearch.svelte';
   import LabelPanel from './LabelPanel.svelte';
@@ -22,7 +23,12 @@
       if (prevTool === 'explorer') explorerVisible.set(false);
       get(displayManager)?.clearClassificationOverlays();
       if (tool === 'segmenter') segmentVisible.set(true);
-      if (tool === 'explorer') explorerVisible.set(true);
+      if (tool === 'explorer') {
+        explorerVisible.set(true);
+        roiDrawing.set(false);  // disable selection in explorer mode
+      } else {
+        roiDrawing.set(true);   // re-enable selection in other modes
+      }
       if (tool === 'similarity') similarityRef?.restoreOverlays();
     }
     prevTool = tool;

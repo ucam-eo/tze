@@ -234,17 +234,34 @@
         <span class="text-gray-500 font-normal">chunk [{selected.ci}, {selected.cj}]</span>
       </div>
       {#if meta}
+        {@const px = meta.transform[0]}
+        {@const originE = meta.transform[2]}
+        {@const originN = meta.transform[5]}
+        {@const chunkE = originE + selected.cj * meta.chunkShape[1] * px}
+        {@const chunkN = originN - selected.ci * meta.chunkShape[0] * px}
+        {@const chunkW = meta.chunkShape[1] * px}
+        {@const chunkH = meta.chunkShape[0] * px}
         <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
           <span class="text-gray-500">CRS</span>
           <span class="text-gray-400">EPSG:{meta.epsg}</span>
           <span class="text-gray-500">Pixel size</span>
-          <span class="text-gray-400">{meta.transform[0]}m</span>
-          <span class="text-gray-500">Dimensions</span>
-          <span class="text-gray-400">{meta.nBands} bands</span>
+          <span class="text-gray-400">{px}m</span>
+          <span class="text-gray-500">Bands</span>
+          <span class="text-gray-400">{meta.nBands}</span>
           <span class="text-gray-500">Shard</span>
-          <span class="text-gray-400">{meta.chunkShape[0]}×{meta.chunkShape[1]} px</span>
-          <span class="text-gray-500">Array</span>
-          <span class="text-gray-400">{meta.shape[0]}×{meta.shape[1]} px</span>
+          <span class="text-gray-400">{meta.chunkShape[1]}×{meta.chunkShape[0]} px ({(chunkW/1000).toFixed(1)}×{(chunkH/1000).toFixed(1)} km)</span>
+          <span class="text-gray-500">UTM NW</span>
+          <span class="text-gray-400 tabular-nums">{chunkE.toFixed(0)}, {chunkN.toFixed(0)}</span>
+          <span class="text-gray-500">UTM SE</span>
+          <span class="text-gray-400 tabular-nums">{(chunkE + chunkW).toFixed(0)}, {(chunkN - chunkH).toFixed(0)}</span>
+          {#if src?.projection}
+            {@const nw = src.projection.inverse(chunkE, chunkN)}
+            {@const se = src.projection.inverse(chunkE + chunkW, chunkN - chunkH)}
+            <span class="text-gray-500">Lon/Lat NW</span>
+            <span class="text-gray-400 tabular-nums">{nw[0].toFixed(4)}°, {nw[1].toFixed(4)}°</span>
+            <span class="text-gray-500">Lon/Lat SE</span>
+            <span class="text-gray-400 tabular-nums">{se[0].toFixed(4)}°, {se[1].toFixed(4)}°</span>
+          {/if}
         </div>
       {/if}
       {#if probeResults.size > 0}
