@@ -131,6 +131,11 @@
           class="ml-2 px-2 py-0.5 rounded text-[9px] border cursor-pointer
                  text-gray-500 border-gray-700 hover:text-gray-300 hover:border-gray-600"
         >clear</button>
+        <button
+          onclick={() => { localStorage.clear(); location.reload(); }}
+          class="ml-2 px-2 py-0.5 rounded text-[9px] border cursor-pointer
+                 text-red-400/70 border-red-800/50 hover:text-red-300 hover:border-red-600"
+        >reset local storage</button>
       </div>
     {/if}
 

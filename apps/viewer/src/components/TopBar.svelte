@@ -13,6 +13,7 @@
   import { displayManager } from '../stores/zarr';
   import { activeClass } from '../stores/classifier';
   import TutorialDropdown from './TutorialDropdown.svelte';
+  import { welcomeJustDismissed } from '../stores/welcome';
 
   interface Props {
     onOpenCatalog: () => void;
@@ -285,7 +286,7 @@
   </div>
 
   <!-- Tutorial dropdown (desktop) -->
-  <div class="hidden sm:block"><TutorialDropdown /></div>
+  <div class="hidden sm:block" class:welcome-pulse={$welcomeJustDismissed}><TutorialDropdown /></div>
 
   <div class="w-px h-4 bg-gray-700/40 hidden sm:block"></div>
 
@@ -327,7 +328,8 @@
                border transition-all
                {$activeTool === tool.id
                  ? 'text-term-cyan border-term-cyan/40 bg-term-cyan/5'
-                 : 'text-gray-600 border-transparent hover:text-gray-400'}"
+                 : 'text-gray-600 border-transparent hover:text-gray-400'}
+               {$welcomeJustDismissed ? 'welcome-pulse' : ''}"
       >
         <tool.icon size={11} />
         <span class="hidden md:inline">{tool.label}</span>
@@ -604,3 +606,13 @@
     {/if}
   </div>
 </div>
+
+<style>
+  .welcome-pulse {
+    animation: welcome-glow 1s ease-in-out 4;
+  }
+  @keyframes welcome-glow {
+    0%, 100% { box-shadow: none; }
+    50% { box-shadow: 0 0 8px rgba(0, 229, 255, 0.6), 0 0 16px rgba(0, 229, 255, 0.25); }
+  }
+</style>

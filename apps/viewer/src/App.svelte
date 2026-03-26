@@ -30,6 +30,7 @@
   import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
   import { drawMode, roiDrawing, roiRegions, roiLoading, addRegion, setConfirmLargeRegion } from './stores/drawing';
   import ConfirmModal from './components/ConfirmModal.svelte';
+  import WelcomeModal from './components/WelcomeModal.svelte';
 
   let mapContainer: HTMLDivElement;
   let similarityRef: SimilaritySearch | undefined = $state();
@@ -641,6 +642,9 @@
 
 <!-- Debug console -->
 <DebugConsole />
+
+<!-- Welcome modal (first visit only) -->
+<WelcomeModal />
 
 <!-- Coordinates (desktop only — no mousemove on mobile) -->
 <div class="hidden sm:block absolute bottom-2 right-4 bg-black/70 backdrop-blur-sm
