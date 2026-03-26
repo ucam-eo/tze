@@ -53,18 +53,24 @@ export async function openStore(url: string): Promise<ZarrStore> {
   const embArr = await zarr.open(rootLoc.resolve('embeddings'), { kind: 'array' });
   const scalesArr = await zarr.open(rootLoc.resolve('scales'), { kind: 'array' });
 
-  const utmZone = attrs['tessera:utm_zone'] as number;
   const projCode = attrs['proj:code'] as string;
   const epsg = parseInt(projCode.split(':')[1], 10);
+  // Derive UTM zone from EPSG code (326xx → zone xx)
+  const utmZone = epsg > 32600 && epsg <= 32660 ? epsg - 32600
+                : epsg > 32700 && epsg <= 32760 ? epsg - 32700
+                : 0;
   const transform = attrs['spatial:transform'] as [number, number, number, number, number, number];
 
   if (!utmZone || !transform || !embArr.shape) {
-    throw new Error('Missing required store metadata (tessera:utm_zone, spatial:transform, shape)');
+    throw new Error('Missing required store metadata (proj:code, spatial:transform, shape)');
   }
 
-  // Detect v1 vs v2 from dataset_version or array dimensionality
-  const datasetVersion = attrs['tessera:dataset_version'] as string | undefined;
-  const isV2 = datasetVersion === 'v2' || embArr.shape.length === 4;
+  // Detect tessera model from geoemb:model URL
+  const geoemModel = (attrs['geoemb:model'] as string) ?? '';
+  const isTessera = geoemModel.includes('geotessera.org');
+
+  // NCHW layout: 4D array with time dimension
+  const isV2 = embArr.shape.length === 4;
 
   // Try optional preview arrays
   let rgbArr: zarr.Array<zarr.DataType> | null = null;
@@ -98,10 +104,20 @@ export async function openStore(url: string): Promise<ZarrStore> {
   let meta: StoreMetadata;
 
   if (isV2) {
-    // v2: NCHW layout — embArr.shape is [T, B, H, W]
-    const [_T, nBands, H, W] = embArr.shape as [number, number, number, number];
+    // NCHW layout — embArr.shape is [T, B, H, W]
+    const [T, nBands, H, W] = embArr.shape as [number, number, number, number];
     const chunks = embArr.chunks as [number, number, number, number];
-    const years = (attrs['tessera:years'] as number[]) ?? [];
+
+    // Derive years: try reading the time coordinate array
+    let years: number[] = [];
+    try {
+      const timeArr = await zarr.open(rootLoc.resolve('time'), { kind: 'array' });
+      const timeData = await zarr.get(timeArr, [null]);
+      years = Array.from(timeData.data as Int32Array);
+    } catch {
+      // Fallback: generate [0, 1, ..., T-1] if time array not readable
+      years = Array.from({ length: T }, (_, i) => i);
+    }
 
     meta = {
       url,
@@ -114,10 +130,10 @@ export async function openStore(url: string): Promise<ZarrStore> {
       hasRgb,
       version: 'v2',
       years,
-      timeIndex: years.length > 0 ? years.length - 1 : 0, // default to latest year
+      timeIndex: years.length > 0 ? years.length - 1 : 0,
     };
   } else {
-    // v1: HWB layout — embArr.shape is [H, W, B]
+    // HWB layout — embArr.shape is [H, W, B]
     meta = {
       url,
       utmZone,

@@ -68,8 +68,11 @@ export async function loadCatalog(catalogUrl: string, signal?: AbortSignal): Pro
 
       zones.push({
         id: item.id as string,
-        utmZone: props['tessera:utm_zone'] as number,
         epsg: parseInt((props['proj:code'] as string).split(':')[1], 10),
+        utmZone: (() => {
+          const e = parseInt((props['proj:code'] as string).split(':')[1], 10);
+          return e > 32600 && e <= 32660 ? e - 32600 : e > 32700 && e <= 32760 ? e - 32700 : 0;
+        })(),
         bbox: item.bbox as [number, number, number, number],
         geometry: (item.geometry as GeoJSON.Polygon),
         zarrUrl,
@@ -139,12 +142,14 @@ export async function loadV2Store(storeUrl: string, signal?: AbortSignal): Promi
   const rootMeta = await fetchJson(`${rootUrl}zarr.json`, signal) as Record<string, unknown>;
   const rootAttrs = (rootMeta.attributes ?? {}) as Record<string, unknown>;
 
-  const datasetVersion = rootAttrs['tessera:dataset_version'] as string;
-  if (datasetVersion !== 'v2') {
-    throw new Error(`Expected tessera:dataset_version="v2", got "${datasetVersion}"`);
+  // Detect tessera store from geoemb:model URL
+  const geoemModel = (rootAttrs['geoemb:model'] as string) ?? '';
+  if (!geoemModel.includes('geotessera.org')) {
+    throw new Error(`Expected a tessera store (geoemb:model containing "geotessera.org"), got "${geoemModel}"`);
   }
 
-  const years = (rootAttrs['tessera:years'] as number[]) ?? [];
+  // Derive years from the first zone's time coordinate array (via consolidated metadata)
+  let years: number[] = [];
 
   // Extract zones from consolidated metadata
   const consolidated = (rootMeta as Record<string, unknown>).consolidated_metadata as {
@@ -160,9 +165,13 @@ export async function loadV2Store(storeUrl: string, signal?: AbortSignal): Promi
       if (!m) continue;
 
       const attrs = (groupMeta.attributes ?? {}) as Record<string, unknown>;
-      const utmZone = attrs['tessera:utm_zone'] as number;
       const projCode = attrs['proj:code'] as string;
-      if (!utmZone || !projCode) continue;
+      if (!projCode) continue;
+      // Derive UTM zone from EPSG code
+      const epsgNum = parseInt(projCode.split(':')[1], 10);
+      const utmZone = epsgNum > 32600 && epsgNum <= 32660 ? epsgNum - 32600
+                     : epsgNum > 32700 && epsgNum <= 32760 ? epsgNum - 32700
+                     : parseInt(m[1], 10);  // fallback: parse from group name
 
       const epsg = parseInt(projCode.split(':')[1], 10);
       const transform = attrs['spatial:transform'] as number[];
@@ -203,6 +212,29 @@ export async function loadV2Store(storeUrl: string, signal?: AbortSignal): Promi
   }
 
   zones.sort((a, b) => a.utmZone - b.utmZone);
+
+  // Derive years from the time array of the first zone
+  if (years.length === 0 && consolidated?.metadata && zones.length > 0) {
+    const firstZone = zones[0].id;
+    const timeKey = `${firstZone}/time`;
+    const timeMeta = consolidated.metadata[timeKey] as Record<string, unknown> | undefined;
+    if (timeMeta) {
+      // The time array shape tells us how many years; actual values need a fetch
+      const shape = timeMeta.shape as number[] | undefined;
+      if (shape && shape[0] > 0) {
+        // Fetch the actual time values from the zarr
+        try {
+          const timeUrl = `${rootUrl}${firstZone}/time/c/0`;
+          const resp = await fetch(timeUrl, { signal });
+          if (resp.ok) {
+            const buf = await resp.arrayBuffer();
+            const int32s = new Int32Array(buf);
+            years = Array.from(int32s).filter(v => v >= 1970 && v <= 2100);
+          }
+        } catch { /* fall back to empty years */ }
+      }
+    }
+  }
 
   // Check for global preview
   let globalPreviewUrl: string | null = null;
