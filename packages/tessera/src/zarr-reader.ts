@@ -53,6 +53,23 @@ export async function openStore(url: string): Promise<ZarrStore> {
   const embArr = await zarr.open(rootLoc.resolve('embeddings'), { kind: 'array' });
   const scalesArr = await zarr.open(rootLoc.resolve('scales'), { kind: 'array' });
 
+  // --- Validate geoemb: convention (required fields) ---
+  const geoemType = attrs['geoemb:type'] as string | undefined;
+  const geoemDimensions = attrs['geoemb:dimensions'] as number | undefined;
+  const geoemModel = attrs['geoemb:model'] as string | undefined;
+  const geoemDataType = attrs['geoemb:data_type'] as string | undefined;
+
+  if (!geoemType || !geoemDimensions || !geoemModel || !geoemDataType) {
+    const missing = [
+      !geoemType && 'geoemb:type',
+      !geoemDimensions && 'geoemb:dimensions',
+      !geoemModel && 'geoemb:model',
+      !geoemDataType && 'geoemb:data_type',
+    ].filter(Boolean).join(', ');
+    console.warn(`[tessera] Missing geoemb convention fields: ${missing} — provenance metadata will be incomplete`);
+  }
+
+  // --- Read proj: and spatial: conventions ---
   const projCode = attrs['proj:code'] as string;
   const epsg = parseInt(projCode.split(':')[1], 10);
   // Derive UTM zone from EPSG code (326xx → zone xx)
@@ -65,9 +82,35 @@ export async function openStore(url: string): Promise<ZarrStore> {
     throw new Error('Missing required store metadata (proj:code, spatial:transform, shape)');
   }
 
-  // Detect tessera model from geoemb:model URL
-  const geoemModel = (attrs['geoemb:model'] as string) ?? '';
-  const isTessera = geoemModel.includes('geotessera.org');
+  // --- Validate geoemb:quantization if present ---
+  const quantization = attrs['geoemb:quantization'] as
+    { method?: string; original_dtype?: string; scale_array?: string } | undefined;
+  if (quantization) {
+    if (quantization.method !== 'per_pixel_scale') {
+      console.warn(`[tessera] Unsupported quantization method "${quantization.method}" — only per_pixel_scale is implemented`);
+    }
+    if (quantization.scale_array && quantization.scale_array !== 'scales') {
+      console.warn(`[tessera] Unexpected scale_array "${quantization.scale_array}" — expected "scales"`);
+    }
+  }
+
+  // --- Read optional geoemb: convention fields for provenance ---
+  const geoemGsd = attrs['geoemb:gsd'] as number | undefined;
+  const geoemSpatialLayout = attrs['geoemb:spatial_layout'] as string | undefined;
+  const geoemBuildVersion = attrs['geoemb:build_version'] as string | undefined;
+  const geoemSourceData = attrs['geoemb:source_data'] as string | string[] | undefined;
+
+  // Shared provenance fields injected into StoreMetadata
+  const provenance = {
+    geoemb_type: geoemType,
+    geoemb_model: geoemModel,
+    geoemb_sourceData: geoemSourceData,
+    geoemb_dataType: geoemDataType,
+    geoemb_gsd: geoemGsd,
+    geoemb_spatialLayout: geoemSpatialLayout,
+    geoemb_buildVersion: geoemBuildVersion,
+    geoemb_quantMethod: quantization?.method,
+  };
 
   // NCHW layout: 4D array with time dimension
   const isV2 = embArr.shape.length === 4;
@@ -131,6 +174,7 @@ export async function openStore(url: string): Promise<ZarrStore> {
       version: 'v2',
       years,
       timeIndex: years.length > 0 ? years.length - 1 : 0,
+      ...provenance,
     };
   } else {
     // HWB layout — embArr.shape is [H, W, B]
@@ -144,7 +188,13 @@ export async function openStore(url: string): Promise<ZarrStore> {
       nBands: (embArr.shape[2] as number) || 128,
       hasRgb,
       version: 'v1',
+      ...provenance,
     };
+  }
+
+  // --- Cross-validate geoemb:dimensions against array shape ---
+  if (meta.nBands !== geoemDimensions) {
+    console.warn(`[tessera] geoemb:dimensions (${geoemDimensions}) does not match array nBands (${meta.nBands})`);
   }
 
   return { meta, embArr, scalesArr, rgbArr, chunkManifest };

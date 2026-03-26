@@ -516,17 +516,42 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     const meta = this.store.meta;
     if (meta.version !== 'v2' || !meta.years || meta.years.length === 0) return result;
 
+    const cs = meta.chunkShape;
     const { r0, c0 } = this.chunkPixelBounds(ci, cj);
 
-    // Fetch one pixel of scales[t, r0:r0+1, c0:c0+1] for each time index
+    // Sample a small strip across the tile (5 pixels at 20% intervals) to
+    // handle partial tiles near coastlines where the corners may be ocean.
+    const probeRows: number[] = [];
+    const probeCols: number[] = [];
+    for (let f = 0.2; f <= 0.8; f += 0.2) {
+      probeRows.push(r0 + Math.floor(cs[0] * f));
+      probeCols.push(c0 + Math.floor(cs[1] * f));
+    }
+
+    // Fetch a small region encompassing all probe points for each year
+    const pr0 = probeRows[0];
+    const pr1 = probeRows[probeRows.length - 1] + 1;
+    const pc0 = probeCols[0];
+    const pc1 = probeCols[probeCols.length - 1] + 1;
+    const probeW = pc1 - pc0;
+
     const promises = meta.years.map(async (year, t) => {
       try {
         const view = await fetchRegion(
           this.store!.scalesArr,
-          [[t, t + 1], [r0, r0 + 1], [c0, c0 + 1]],
+          [[t, t + 1], [pr0, pr1], [pc0, pc1]],
         );
-        const val = (view.data as Float32Array)[0];
-        result.set(year, isFinite(val) && val !== 0);
+        const data = view.data as Float32Array;
+        // Check if any probe point has valid data
+        let found = false;
+        for (let ri = 0; ri < probeRows.length && !found; ri++) {
+          for (let ci2 = 0; ci2 < probeCols.length && !found; ci2++) {
+            const idx = (probeRows[ri] - pr0) * probeW + (probeCols[ci2] - pc0);
+            const val = data[idx];
+            if (isFinite(val) && val !== 0) found = true;
+          }
+        }
+        result.set(year, found);
       } catch {
         result.set(year, false);
       }

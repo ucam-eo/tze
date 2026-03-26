@@ -59,6 +59,32 @@ export interface StoreMetadata {
 
   /** Active time index into the years array (v2 only, 0-based). */
   timeIndex?: number;
+
+  // --- geoemb: convention provenance ---
+
+  /** Embedding type from `geoemb:type` (e.g. "pixel" or "chip"). */
+  geoemb_type?: string;
+
+  /** Encoder model URL from `geoemb:model`. */
+  geoemb_model?: string;
+
+  /** Source dataset URL(s) from `geoemb:source_data`. */
+  geoemb_sourceData?: string | string[];
+
+  /** Stored data type from `geoemb:data_type` (e.g. "int8", "float32"). */
+  geoemb_dataType?: string;
+
+  /** Ground sample distance in metres from `geoemb:gsd`. */
+  geoemb_gsd?: number;
+
+  /** Spatial layout from `geoemb:spatial_layout` (e.g. "utm_zones"). */
+  geoemb_spatialLayout?: string;
+
+  /** Build version from `geoemb:build_version`. */
+  geoemb_buildVersion?: string;
+
+  /** Quantization method from `geoemb:quantization.method`. */
+  geoemb_quantMethod?: string;
 }
 
 /**

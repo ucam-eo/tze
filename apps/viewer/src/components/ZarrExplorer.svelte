@@ -14,6 +14,145 @@
   let temporalLoading = $state(false);
   let temporalGen = 0;
 
+  // Per-tile stats (computed from loaded region OR fetched on demand)
+  type TileStats = {
+    validPixels: number;
+    totalPixels: number;
+    meanNorm: number;
+    minNorm: number;
+    maxNorm: number;
+    variance: number;
+    fingerprint: Float32Array;
+  };
+  let tileStats = $state<TileStats | null>(null);
+  let tileStatsLoading = $state(false);
+  let tileStatsGen = 0;
+
+  /** Try to compute stats from already-loaded region; if not loaded, fetch on demand. */
+  async function computeTileStats() {
+    const hover = get(explorerHover);
+    if (!hover || hover.ci < 0) { tileStats = null; return; }
+    const mgr = get(sourceManager);
+    if (!mgr) { tileStats = null; return; }
+
+    // Try from loaded region first
+    const regions = mgr.getEmbeddingRegions();
+    const region = regions.get(hover.zoneId);
+    if (region) {
+      const tIdx = (hover.ci - region.ciMin) * region.gridCols + (hover.cj - region.cjMin);
+      if (tIdx >= 0 && tIdx < region.loaded.length && region.loaded[tIdx]) {
+        computeStatsFromBuffer(region.emb, tIdx, region.tileW * region.tileH, region.nBands);
+        return;
+      }
+    }
+
+    // Not in region — fetch the tile on demand
+    const myGen = ++tileStatsGen;
+    tileStatsLoading = true;
+    tileStats = null;
+
+    try {
+      let src = mgr.getOpenSource(hover.zoneId);
+      if (!src) src = await mgr.getSource(hover.zoneId);
+      const meta = src.metadata;
+      if (!meta || myGen !== tileStatsGen) { tileStatsLoading = false; return; }
+
+      const store = (src as unknown as { store: { embArr: unknown; scalesArr: unknown } }).store;
+      if (!store) { tileStatsLoading = false; return; }
+
+      const { fetchRegion } = await import('@ucam-eo/tessera');
+      if (myGen !== tileStatsGen) return;
+
+      const cs = meta.chunkShape;
+      const nBands = meta.nBands;
+      const r0 = hover.ci * cs[0];
+      const c0 = hover.cj * cs[1];
+      const isV2 = meta.version === 'v2';
+      const t = meta.timeIndex ?? (meta.years ? meta.years.length - 1 : 0);
+
+      const [embView, scaleView] = await Promise.all([
+        isV2
+          ? fetchRegion(store.embArr as Parameters<typeof fetchRegion>[0], [[t, t + 1], null, [r0, r0 + cs[0]], [c0, c0 + cs[1]]])
+          : fetchRegion(store.embArr as Parameters<typeof fetchRegion>[0], [[r0, r0 + cs[0]], [c0, c0 + cs[1]], null]),
+        isV2
+          ? fetchRegion(store.scalesArr as Parameters<typeof fetchRegion>[0], [[t, t + 1], [r0, r0 + cs[0]], [c0, c0 + cs[1]]])
+          : fetchRegion(store.scalesArr as Parameters<typeof fetchRegion>[0], [[r0, r0 + cs[0]], [c0, c0 + cs[1]]]),
+      ]);
+      if (myGen !== tileStatsGen) return;
+
+      const tilePixels = cs[0] * cs[1];
+      const int8 = new Int8Array(embView.data.buffer, embView.data.byteOffset, tilePixels * nBands);
+      const scalesF32 = new Float32Array(scaleView.data.buffer, scaleView.data.byteOffset, tilePixels);
+
+      // Dequantise into a flat buffer and compute stats
+      const emb = new Float32Array(tilePixels * nBands);
+      for (let p = 0; p < tilePixels; p++) {
+        const s = scalesF32[p];
+        const valid = s && !isNaN(s) && isFinite(s);
+        const dst = p * nBands;
+        if (valid) {
+          if (isV2) {
+            for (let b = 0; b < nBands; b++) emb[dst + b] = int8[b * tilePixels + p] * s;
+          } else {
+            for (let b = 0; b < nBands; b++) emb[dst + b] = int8[p * nBands + b] * s;
+          }
+        } else {
+          emb[dst] = NaN;
+        }
+      }
+
+      if (myGen === tileStatsGen) {
+        computeStatsFromBuffer(emb, 0, tilePixels, nBands);
+      }
+    } catch { /* fetch failed */ }
+
+    if (myGen === tileStatsGen) tileStatsLoading = false;
+  }
+
+  function computeStatsFromBuffer(emb: Float32Array, tileIdx: number, tilePixels: number, nBands: number) {
+    const base = tileIdx * tilePixels * nBands;
+    let validCount = 0, sumNorm = 0, minN = Infinity, maxN = -Infinity;
+    const meanEmb = new Float32Array(nBands);
+
+    for (let p = 0; p < tilePixels; p++) {
+      const off = base + p * nBands;
+      if (isNaN(emb[off])) continue;
+      validCount++;
+      let normSq = 0;
+      for (let b = 0; b < nBands; b++) {
+        const v = emb[off + b];
+        meanEmb[b] += v;
+        normSq += v * v;
+      }
+      const norm = Math.sqrt(normSq);
+      sumNorm += norm;
+      if (norm < minN) minN = norm;
+      if (norm > maxN) maxN = norm;
+    }
+    if (validCount === 0) { tileStats = null; tileStatsLoading = false; return; }
+
+    for (let b = 0; b < nBands; b++) meanEmb[b] /= validCount;
+
+    let varSum = 0;
+    for (let p = 0; p < tilePixels; p++) {
+      const off = base + p * nBands;
+      if (isNaN(emb[off])) continue;
+      let distSq = 0;
+      for (let b = 0; b < nBands; b++) {
+        const d = emb[off + b] - meanEmb[b];
+        distSq += d * d;
+      }
+      varSum += distSq;
+    }
+
+    tileStats = {
+      validPixels: validCount, totalPixels: tilePixels,
+      meanNorm: sumNorm / validCount, minNorm: minN, maxNorm: maxN,
+      variance: varSum / validCount, fingerprint: meanEmb,
+    };
+    tileStatsLoading = false;
+  }
+
   async function fetchTemporalData() {
     const hover = get(explorerHover);
     if (!hover || hover.ci < 0) return;
@@ -34,17 +173,44 @@
     const store = (src as unknown as { store: { embArr: unknown; scalesArr: unknown } }).store;
     if (!store) { temporalLoading = false; return; }
 
-    // Pixel at top-left of shard + 100 pixels in (avoid edge/water pixels)
-    const r0 = hover.ci * meta.chunkShape[0] + 100;
-    const c0 = hover.cj * meta.chunkShape[1] + 100;
+    // Sample a few candidate pixels across the tile centre to find a valid one
+    const cs = meta.chunkShape;
     const T = meta.years.length;
     const nBands = meta.nBands;
+    const baseR = hover.ci * cs[0];
+    const baseC = hover.cj * cs[1];
+
+    // Candidate offsets at 30%, 50%, 70% of the tile
+    const offsets = [0.5, 0.3, 0.7, 0.2, 0.8];
 
     try {
       const { fetchRegion } = await import('@ucam-eo/tessera');
       if (myGen !== temporalGen) return;
 
-      // Fetch all years at once: embeddings[0:T, :, r0:r0+1, c0:c0+1] and scales[0:T, r0:r0+1, c0:c0+1]
+      // Find a valid pixel by probing candidates
+      let r0 = baseR + Math.floor(cs[0] * 0.5);
+      let c0 = baseC + Math.floor(cs[1] * 0.5);
+      let foundValid = false;
+
+      for (const ry of offsets) {
+        if (foundValid) break;
+        for (const cx of offsets) {
+          const tr = baseR + Math.floor(cs[0] * ry);
+          const tc = baseC + Math.floor(cs[1] * cx);
+          const sv = await fetchRegion(
+            store.scalesArr as Parameters<typeof fetchRegion>[0],
+            [[T - 1, T], [tr, tr + 1], [tc, tc + 1]],
+          );
+          if (myGen !== temporalGen) return;
+          const val = (sv.data as Float32Array)[0];
+          if (isFinite(val) && val !== 0) {
+            r0 = tr; c0 = tc; foundValid = true; break;
+          }
+        }
+      }
+      if (!foundValid) { temporalLoading = false; return; }
+
+      // Fetch all years at the valid pixel
       const [embView, scaleView] = await Promise.all([
         fetchRegion(store.embArr as Parameters<typeof fetchRegion>[0], [null, null, [r0, r0 + 1], [c0, c0 + 1]]),
         fetchRegion(store.scalesArr as Parameters<typeof fetchRegion>[0], [null, [r0, r0 + 1], [c0, c0 + 1]]),
@@ -108,19 +274,21 @@
 
   $effect(() => {
     const hover = $explorerHover;
-    // Cancel any pending probe
     clearTimeout(probeTimer);
     probeResults = new Map();
     probeGen++;
     probing = false;
 
-    // Reset temporal data
     temporalData = [];
     temporalGen++;
     temporalLoading = false;
 
-    // Start a new probe after 300ms if a valid shard is selected
+    // Fetch tile stats (from region or on demand)
+    tileStats = null;
+    tileStatsGen++;
+    tileStatsLoading = false;
     if (hover && hover.ci >= 0) {
+      computeTileStats();
       probeTimer = setTimeout(() => probeSelectedShard(), 300);
     }
 
@@ -128,6 +296,15 @@
   });
 
   const selected = $derived($explorerHover);
+
+  /** Pretty-print a URL: show just the hostname + last path segment. */
+  function shortUrl(url: string): string {
+    try {
+      const u = new URL(url);
+      const parts = u.pathname.split('/').filter(Boolean);
+      return u.hostname + (parts.length > 0 ? '/.../' + parts[parts.length - 1] : '');
+    } catch { return url; }
+  }
 </script>
 
 <div class="space-y-3" data-tutorial="explorer-panel">
@@ -163,7 +340,7 @@
           <span class="text-gray-500">Bands</span>
           <span class="text-gray-400">{meta.nBands}</span>
           <span class="text-gray-500">Shard</span>
-          <span class="text-gray-400">{meta.chunkShape[1]}×{meta.chunkShape[0]} px ({(chunkW/1000).toFixed(1)}×{(chunkH/1000).toFixed(1)} km)</span>
+          <span class="text-gray-400">{meta.chunkShape[1]}x{meta.chunkShape[0]} px ({(chunkW/1000).toFixed(1)}x{(chunkH/1000).toFixed(1)} km)</span>
           <span class="text-gray-500">UTM NW</span>
           <span class="text-gray-400 tabular-nums">{chunkE.toFixed(0)}, {chunkN.toFixed(0)}</span>
           <span class="text-gray-500">UTM SE</span>
@@ -172,9 +349,9 @@
             {@const nw = src.projection.inverse(chunkE, chunkN)}
             {@const se = src.projection.inverse(chunkE + chunkW, chunkN - chunkH)}
             <span class="text-gray-500">Lon/Lat NW</span>
-            <span class="text-gray-400 tabular-nums">{nw[0].toFixed(4)}°, {nw[1].toFixed(4)}°</span>
+            <span class="text-gray-400 tabular-nums">{nw[0].toFixed(4)}, {nw[1].toFixed(4)}</span>
             <span class="text-gray-500">Lon/Lat SE</span>
-            <span class="text-gray-400 tabular-nums">{se[0].toFixed(4)}°, {se[1].toFixed(4)}°</span>
+            <span class="text-gray-400 tabular-nums">{se[0].toFixed(4)}, {se[1].toFixed(4)}</span>
           {/if}
           {#if meta.years && meta.years.length > 0}
             {@const latestT = meta.years.length - 1}
@@ -188,6 +365,98 @@
             </span>
           {/if}
         </div>
+
+        <!-- Provenance (geoemb: convention) -->
+        {#if meta.geoemb_model || meta.geoemb_sourceData}
+          <div class="border-t border-gray-800/40 pt-1.5 space-y-1">
+            <div class="text-[9px] text-gray-500 uppercase tracking-wider">Provenance</div>
+            <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[9px]">
+              {#if meta.geoemb_model}
+                <span class="text-gray-500">Model</span>
+                <a href={meta.geoemb_model} target="_blank"
+                   class="text-term-cyan/60 hover:text-term-cyan truncate">{shortUrl(meta.geoemb_model)}</a>
+              {/if}
+              {#if meta.geoemb_type}
+                <span class="text-gray-500">Type</span>
+                <span class="text-gray-400">{meta.geoemb_type}</span>
+              {/if}
+              {#if meta.geoemb_dataType}
+                <span class="text-gray-500">Data type</span>
+                <span class="text-gray-400">{meta.geoemb_dataType}{meta.geoemb_quantMethod ? ` (${meta.geoemb_quantMethod})` : ''}</span>
+              {/if}
+              {#if meta.geoemb_gsd}
+                <span class="text-gray-500">GSD</span>
+                <span class="text-gray-400">{meta.geoemb_gsd}m</span>
+              {/if}
+              {#if meta.geoemb_spatialLayout}
+                <span class="text-gray-500">Layout</span>
+                <span class="text-gray-400">{meta.geoemb_spatialLayout}</span>
+              {/if}
+              {#if meta.geoemb_buildVersion}
+                <span class="text-gray-500">Build</span>
+                <span class="text-gray-400">{meta.geoemb_buildVersion}</span>
+              {/if}
+              {#if meta.geoemb_sourceData}
+                <span class="text-gray-500">Source</span>
+                <span class="text-gray-400 text-[8px]">
+                  {#if Array.isArray(meta.geoemb_sourceData)}
+                    {#each meta.geoemb_sourceData as url, i}
+                      {#if i > 0}<span class="text-gray-600">, </span>{/if}
+                      <a href={url} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">{shortUrl(url)}</a>
+                    {/each}
+                  {:else}
+                    <a href={meta.geoemb_sourceData} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">{shortUrl(meta.geoemb_sourceData)}</a>
+                  {/if}
+                </span>
+              {/if}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Per-tile stats + embedding fingerprint -->
+        {#if tileStats}
+          <div class="border-t border-gray-800/40 pt-1.5 space-y-1">
+            <div class="text-[9px] text-gray-500 uppercase tracking-wider">Tile Stats</div>
+            <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
+              <span class="text-gray-500">Valid pixels</span>
+              <span class="text-gray-400">{tileStats.validPixels.toLocaleString()}/{tileStats.totalPixels.toLocaleString()} ({(tileStats.validPixels / tileStats.totalPixels * 100).toFixed(0)}%)</span>
+              <span class="text-gray-500">Norm range</span>
+              <span class="text-gray-400 tabular-nums">{tileStats.minNorm.toFixed(1)} – {tileStats.maxNorm.toFixed(1)}</span>
+              <span class="text-gray-500">Mean norm</span>
+              <span class="text-gray-400 tabular-nums">{tileStats.meanNorm.toFixed(2)}</span>
+              <span class="text-gray-500">Variance</span>
+              <span class="text-gray-400 tabular-nums">{tileStats.variance.toFixed(1)}</span>
+            </div>
+
+            <!-- Embedding fingerprint — mean embedding as a waveform -->
+            <div class="text-[8px] text-gray-600 mt-1">Embedding fingerprint</div>
+            {#if tileStats.fingerprint.length > 0}
+              {@const fp = tileStats.fingerprint}
+              {@const fpMax = Math.max(...Array.from(fp).map(Math.abs)) || 1}
+              <svg viewBox="0 0 {fp.length} 40" class="w-full h-10 rounded overflow-hidden"
+                   style="background: rgba(0,0,0,0.3)">
+                <line x1="0" y1="20" x2={fp.length} y2="20" stroke="rgba(100,100,100,0.2)" stroke-width="0.5" />
+                {#each Array.from(fp) as v, i}
+                  {@const h = (v / fpMax) * 18}
+                  {@const hue = ((i / fp.length) * 270 + 180) % 360}
+                  <rect
+                    x={i}
+                    y={h >= 0 ? 20 - h : 20}
+                    width="1"
+                    height={Math.abs(h)}
+                    fill="hsl({hue}, 70%, 55%)"
+                    opacity="0.8"
+                  />
+                {/each}
+              </svg>
+            {/if}
+          </div>
+        {:else if tileStatsLoading}
+          <div class="text-[9px] text-gray-600 italic border-t border-gray-800/40 pt-1.5">
+            <span class="inline-block w-2 h-2 border border-gray-500 border-t-term-cyan rounded-full animate-spin mr-1"></span>
+            Fetching tile embeddings...
+          </div>
+        {/if}
       {:else}
         <div class="text-[9px] text-gray-500">Loading zone metadata...</div>
       {/if}
