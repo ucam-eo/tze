@@ -8,7 +8,7 @@
 }
 
 body { margin: 0; padding: 0; overflow: hidden; background: #000; }
-#map { position: absolute; inset: 0; }
+#map { position: absolute; inset: 0; z-index: 0; }
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

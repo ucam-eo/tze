@@ -1,28 +1,31 @@
 /**
- * Region-wide cyberpunk satellite acquisition animation.
+ * Region-wide loading animation — WebGL shader → MapLibre ImageSource.
  *
- * Renders a single canvas covering the ROI polygon with:
+ * Renders effects on an offscreen WebGL canvas, composites HUD text with
+ * Canvas2D, then pushes to a MapLibre ImageSource at throttled intervals.
+ * Because the image is geo-referenced, it rotates and pitches with the map.
+ *
+ * Effects (all GPU via fragment shader):
  *   - Polygon-clipped dark overlay
- *   - Radar sweep beam rotating from centre
- *   - Horizontal scan line with glow
- *   - Tile grid cells that activate/pulse as chunks load
- *   - Data rain (falling hex characters) in unloaded areas
- *   - Particle field rising from loaded tiles
- *   - Edge glow on polygon border
- *   - HUD: progress ring, percentage, status text, coordinate readout
+ *   - Tile grid with per-cell glow as chunks load
+ *   - Data-flow dots streaming along grid lines
+ *   - Dual scan lines + diagonal accent
+ *   - Progress ring with spinning accents
+ *   - Polygon edge glow + corner brackets
+ *   - CRT scanline + noise grain
+ *
+ * HUD text (Canvas2D, composited on top):
+ *   - Percentage, status label, tile count at polygon centroid
  */
 
+import type { Map as MaplibreMap } from 'maplibre-gl';
+
 export interface RegionAnimationOpts {
-  map: maplibregl.Map;
-  /** Polygon ring in [lng, lat] pairs (closed ring). */
+  map: MaplibreMap;
   polygon: [number, number][];
-  /** Bounding box [west, south, east, north] in lng/lat. */
   bbox: [number, number, number, number];
-  /** Tile grid: which chunk indices are being loaded. */
   chunks: { ci: number; cj: number }[];
-  /** Chunk grid bounds. */
   ciMin: number; ciMax: number; cjMin: number; cjMax: number;
-  /** Function to get lng/lat corners for a chunk. */
   chunkCorners: (ci: number, cj: number) => [number, number][];
 }
 
@@ -31,50 +34,234 @@ const LAYER_ID = 'zarr-region-anim-lyr';
 const CANVAS_W = 1024;
 const PUSH_INTERVAL = 60; // ms between MapLibre image updates
 
-// Cyber colours
-const CYAN = [0, 229, 255] as const;
-const MAGENTA = [255, 0, 128] as const;
-const AMBER = [255, 180, 0] as const;
+// ---------------------------------------------------------------------------
+// Shaders
+// ---------------------------------------------------------------------------
+
+const VERT = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main() {
+  v_uv = a_pos * 0.5 + 0.5;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+`;
+
+const FRAG = `
+precision highp float;
+varying vec2 v_uv;
+
+uniform float u_time;
+uniform float u_progress;
+uniform vec2  u_gridSize;
+uniform vec2  u_centroid;
+uniform float u_aspect;
+uniform sampler2D u_tiles;
+uniform sampler2D u_mask;
+
+const vec3  C   = vec3(0.0, 0.898, 1.0);
+const vec3  MAG = vec3(1.0, 0.0, 0.5);
+const float PI  = 3.14159265;
+const float TAU = 6.28318530;
+
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+void main() {
+  vec2 uv = v_uv;
+
+  // Polygon mask
+  float m = texture2D(u_mask, uv).r;
+  if (m < 0.5) discard;
+
+  // Dark base
+  vec3 col = vec3(0.0, 0.012, 0.025);
+  float alpha = 0.95;
+
+  // --- Grid ---
+  vec2 cell = uv * u_gridSize;
+  vec2 cf   = fract(cell);
+  vec2 ci   = floor(cell);
+  float lw  = 0.018;
+  float gx  = smoothstep(0.0, lw, cf.x) * smoothstep(0.0, lw, 1.0 - cf.x);
+  float gy  = smoothstep(0.0, lw, cf.y) * smoothstep(0.0, lw, 1.0 - cf.y);
+  float grid = 1.0 - gx * gy;
+
+  // Data-flow dots along grid lines
+  float flowX = smoothstep(0.85, 1.0, fract(uv.x * u_gridSize.x * 3.0 - u_time * 2.5));
+  float flowY = smoothstep(0.85, 1.0, fract(uv.y * u_gridSize.y * 3.0 - u_time * 1.8));
+  float onLineH = 1.0 - smoothstep(0.0, lw * 1.5, cf.y) * smoothstep(0.0, lw * 1.5, 1.0 - cf.y);
+  float onLineV = 1.0 - smoothstep(0.0, lw * 1.5, cf.x) * smoothstep(0.0, lw * 1.5, 1.0 - cf.x);
+  float dataFlow = onLineH * flowX + onLineV * flowY;
+
+  // --- Tile state ---
+  vec2 tuv    = (ci + 0.5) / u_gridSize;
+  vec4 ts     = texture2D(u_tiles, tuv);
+  float loaded = step(0.5, ts.r);
+  float age    = ts.g;
+
+  // Flash: intense white-cyan burst that fades over ~1s
+  float flash   = loaded * max(0.0, 1.0 - age * 2.5);
+  float flash2  = flash * flash;  // sharper falloff, punchier hit
+  // Steady breathing glow on loaded tiles
+  float breathe = loaded * (0.18 + 0.09 * sin(u_time * 2.5 + ci.x * 0.7 + ci.y * 0.5));
+
+  col += C * breathe;
+  col += C * flash2 * 1.2;                    // bright cyan burst
+  col += vec3(1.0) * flash2 * 0.4;            // white-hot core
+  col += MAG * flash * 0.25;                   // magenta fringe
+  col += C * loaded * 0.10;                    // constant loaded fill
+  col += C * grid * (0.08 + loaded * 0.45);    // bright grid on loaded
+  col += C * loaded * dataFlow * 0.5;          // data flow dots
+
+  // Unloaded: dim but visible pulse
+  float unl = 1.0 - loaded;
+  col += C * unl * 0.04 * (0.5 + 0.5 * sin(u_time * 1.5 + ci.x + ci.y * 0.7));
+  col += C * grid * unl * 0.04;
+
+  // --- Scan lines — bright primary, subtle secondary ---
+  float s1 = fract(u_time * 0.14);
+  float s1d = abs(uv.y - s1);
+  col += C * smoothstep(0.05, 0.0, s1d) * 0.4;
+  col += vec3(1.0) * smoothstep(0.005, 0.0, s1d) * 0.15;  // white-hot core
+  float s2 = fract(u_time * 0.09 + 0.5);
+  col += C * smoothstep(0.025, 0.0, abs(uv.y - s2)) * 0.12;
+  float dg = fract(u_time * 0.065 + 0.33);
+  col += C * smoothstep(0.025, 0.0, abs((uv.x + uv.y) * 0.5 - dg)) * 0.10;
+
+  // --- Progress ring ---
+  vec2 d    = (uv - u_centroid) * vec2(u_aspect, 1.0);
+  float dist = length(d);
+  float rR  = 0.08;
+  float rW  = 0.004;
+
+  col += C * smoothstep(rW * 2.0, 0.0, abs(dist - rR)) * 0.06;
+
+  float ang = atan(-d.y, d.x);
+  float nA  = mod(ang + PI * 0.5, TAU) / TAU;
+  col += C * step(nA, u_progress) * smoothstep(rW, 0.0, abs(dist - rR)) * 0.9;
+
+  if (u_progress > 0.001 && u_progress < 0.999) {
+    float tipAng = -PI * 0.5 + u_progress * TAU;
+    vec2 tipD = vec2(cos(tipAng), -sin(tipAng)) * rR;
+    col += vec3(1.0) * smoothstep(0.012, 0.0, length(d - tipD)) * 0.7;
+  }
+
+  float oR  = rR * 1.3;
+  float onO = smoothstep(0.003, 0.0, abs(dist - oR));
+  float spA = mod(ang + u_time * 1.8, TAU) / TAU;
+  col += C * onO * step(0.5, fract(spA * 12.0)) * 0.12;
+
+  float iR  = rR * 0.7;
+  float onI = smoothstep(0.002, 0.0, abs(dist - iR));
+  float spI = mod(ang - u_time * 1.2, TAU) / TAU;
+  col += C * onI * step(0.5, fract(spI * 8.0)) * 0.06;
+
+  // --- Edge glow (from mask gradient) ---
+  float px = 1.0 / 256.0;
+  float ex = texture2D(u_mask, uv + vec2(px*2.0,0.0)).r - texture2D(u_mask, uv - vec2(px*2.0,0.0)).r;
+  float ey = texture2D(u_mask, uv + vec2(0.0,px*2.0)).r - texture2D(u_mask, uv - vec2(0.0,px*2.0)).r;
+  col += C * length(vec2(ex,ey)) * (0.45 + 0.2 * sin(u_time * 2.5)) * 2.5;
+
+  // --- Corner brackets ---
+  float bL = 0.065, bT = 0.005;
+  float tl = max(step(uv.x, bL) * step(uv.y, bT), step(uv.y, bL) * step(uv.x, bT));
+  float tr = max(step(1.0-bL, uv.x) * step(uv.y, bT), step(1.0-bT, uv.x) * step(uv.y, bL));
+  float bl = max(step(uv.x, bL) * step(1.0-bT, uv.y), step(1.0-bL, uv.y) * step(uv.x, bT));
+  float br = max(step(1.0-bL, uv.x) * step(1.0-bT, uv.y), step(1.0-bT, uv.x) * step(1.0-bL, uv.y));
+  col += C * max(max(tl,tr), max(bl,br)) * (0.55 + 0.35 * sin(u_time * 2.2));
+
+  // --- CRT + grain ---
+  col *= 1.0 - 0.04 * step(0.5, fract(gl_FragCoord.y * 0.5));
+  col += (hash(uv * 500.0 + u_time * 7.0) - 0.5) * 0.02;
+
+  gl_FragColor = vec4(col, alpha * m);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// GL helpers
+// ---------------------------------------------------------------------------
+
+function compileShader(gl: WebGLRenderingContext, type: number, src: string): WebGLShader | null {
+  const s = gl.createShader(type);
+  if (!s) return null;
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.warn('[RegionAnim] shader:', gl.getShaderInfoLog(s));
+    gl.deleteShader(s);
+    return null;
+  }
+  return s;
+}
+
+function linkProgram(gl: WebGLRenderingContext, vs: WebGLShader, fs: WebGLShader): WebGLProgram | null {
+  const p = gl.createProgram();
+  if (!p) return null;
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    console.warn('[RegionAnim] link:', gl.getProgramInfoLog(p));
+    gl.deleteProgram(p);
+    return null;
+  }
+  return p;
+}
+
+// ---------------------------------------------------------------------------
+// Animation class
+// ---------------------------------------------------------------------------
 
 export class RegionLoadingAnimation {
-  private map: maplibregl.Map;
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
-  private corners: [[number, number], [number, number], [number, number], [number, number]];
-  private frameId: number | null = null;
+  private map: MaplibreMap;
+  private destroyed = false;
   private loaded = 0;
   private total: number;
   private startTime = performance.now();
-  private lastPush = 0;
-  private pendingUpdate = false;
-  private destroyed = false;
 
-  // Grid info
+  // Grid
   private gridRows: number;
   private gridCols: number;
   private ciMin: number;
   private cjMin: number;
   private chunkSet: Set<string>;
   private loadedSet = new Set<string>();
-  private tileActivateTime = new Map<string, number>(); // key → time when loaded
+  private tileLoadTime = new Map<string, number>();
 
-  // Polygon in canvas coordinates
-  private polyPath: { x: number; y: number }[] = [];
-  // Polygon centroid in canvas coordinates
-  private centroidX: number = 0;
-  private centroidY: number = 0;
-  // Mercator correction: scale x by this factor so circles/text appear undistorted
-  private hudScaleX: number = 1;
+  // Canvas / GL
+  private glCanvas: HTMLCanvasElement;
+  private gl: WebGLRenderingContext | null = null;
+  private program: WebGLProgram | null = null;
+  private vbuf: WebGLBuffer | null = null;
+  private tileTex: WebGLTexture | null = null;
+  private maskTex: WebGLTexture | null = null;
+  private tileData: Uint8Array;
+  private loc: Record<string, WebGLUniformLocation | null> = {};
 
-  // Canvas dimensions
+  // 2D compositing canvas (HUD text drawn here)
+  private outCanvas: HTMLCanvasElement;
+  private outCtx: CanvasRenderingContext2D;
   private cw: number;
   private ch: number;
 
-  // Particles
-  private particles: { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; size: number }[] = [];
+  // MapLibre ImageSource corners
+  private corners: [[number, number], [number, number], [number, number], [number, number]];
 
-  // Data rain columns
-  private rainColumns: { chars: { char: string; y: number; speed: number; opacity: number }[] }[] = [];
+  // Centroid (UV + canvas pixel)
+  private centroidUV: [number, number];
+  private hudScaleX: number;
+
+  // Aspect correction for shader
+  private aspectRatio: number;
+
+  // Animation state
+  private frameId: number | null = null;
+  private lastPush = 0;
+  private pendingUpdate = false;
+  private labels = ['ACQUIRING', 'EMBEDDING', 'SCANNING', 'ANALYSING'];
 
   constructor(opts: RegionAnimationOpts) {
     this.map = opts.map;
@@ -83,490 +270,315 @@ export class RegionLoadingAnimation {
     this.cjMin = opts.cjMin;
     this.gridRows = opts.ciMax - opts.ciMin + 1;
     this.gridCols = opts.cjMax - opts.cjMin + 1;
-
     this.chunkSet = new Set(opts.chunks.map(c => `${c.ci}_${c.cj}`));
+    this.tileData = new Uint8Array(this.gridCols * this.gridRows * 4);
 
-    // Canvas aspect ratio from bbox
     const [west, south, east, north] = opts.bbox;
+
+    // Canvas aspect from bbox
     const aspect = (east - west) / (north - south);
     this.cw = CANVAS_W;
     this.ch = Math.round(CANVAS_W / Math.max(0.1, aspect));
-    if (this.ch < 100) this.ch = 100;
-    if (this.ch > 2048) this.ch = 2048;
-
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = this.cw;
-    this.canvas.height = this.ch;
-    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true })!;
+    this.ch = Math.max(100, Math.min(2048, this.ch));
 
     // Corners for MapLibre ImageSource (TL, TR, BR, BL)
     this.corners = [
       [west, north], [east, north],
       [east, south], [west, south],
-    ] as [[number, number], [number, number], [number, number], [number, number]];
+    ];
 
-    // Map polygon to canvas coordinates
-    this.polyPath = opts.polygon.map(([lng, lat]) => ({
-      x: ((lng - west) / (east - west)) * this.cw,
-      y: ((north - lat) / (north - south)) * this.ch,
-    }));
-
-    // Compute polygon centroid (signed-area weighted)
-    const pp = this.polyPath;
-    let areaSum = 0, cxSum = 0, cySum = 0;
-    for (let i = 0, j = pp.length - 1; i < pp.length; j = i++) {
-      const cross = pp[j].x * pp[i].y - pp[i].x * pp[j].y;
-      areaSum += cross;
-      cxSum += (pp[j].x + pp[i].x) * cross;
-      cySum += (pp[j].y + pp[i].y) * cross;
-    }
-    if (Math.abs(areaSum) > 1e-6) {
-      this.centroidX = cxSum / (3 * areaSum);
-      this.centroidY = cySum / (3 * areaSum);
-    } else {
-      // Degenerate polygon — fallback to bbox centre
-      this.centroidX = this.cw / 2;
-      this.centroidY = this.ch / 2;
-    }
-
-    // Mercator correction: on the map, 1° longitude appears cos(lat) times
-    // as wide as 1° latitude. Our canvas maps degrees linearly, so we need
-    // to stretch x by 1/cos(lat) when drawing the HUD so circles appear round.
+    // Mercator HUD correction
     const centerLat = (south + north) / 2;
     this.hudScaleX = 1 / Math.cos(centerLat * Math.PI / 180);
+    this.aspectRatio = (east - west)
+      / ((north - south) * Math.cos(centerLat * Math.PI / 180));
 
-    // Initialize data rain
-    this.initRain();
+    // Polygon centroid
+    const pp = opts.polygon;
+    let aSum = 0, cxS = 0, cyS = 0;
+    for (let i = 0, j = pp.length - 1; i < pp.length; j = i++) {
+      const cr = pp[j][0] * pp[i][1] - pp[i][0] * pp[j][1];
+      aSum += cr; cxS += (pp[j][0] + pp[i][0]) * cr; cyS += (pp[j][1] + pp[i][1]) * cr;
+    }
+    if (Math.abs(aSum) > 1e-10) {
+      this.centroidUV = [cxS / (3 * aSum), cyS / (3 * aSum)];
+    } else {
+      this.centroidUV = [(west + east) / 2, (south + north) / 2];
+    }
+    // Convert to UV (0-1 in bbox)
+    this.centroidUV = [
+      (this.centroidUV[0] - west) / (east - west),
+      (north - this.centroidUV[1]) / (north - south),
+    ];
+
+    // --- Offscreen WebGL canvas ---
+    this.glCanvas = document.createElement('canvas');
+    this.glCanvas.width = this.cw;
+    this.glCanvas.height = this.ch;
+    this.gl = this.glCanvas.getContext('webgl', {
+      alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true, antialias: false,
+    });
+    if (this.gl) this.initGL(this.gl, opts.polygon, west, south, east, north);
+
+    // --- 2D compositing canvas ---
+    this.outCanvas = document.createElement('canvas');
+    this.outCanvas.width = this.cw;
+    this.outCanvas.height = this.ch;
+    this.outCtx = this.outCanvas.getContext('2d')!;
 
     // Add to map
     this.addToMap();
     this.animate(performance.now());
   }
 
-  private initRain(): void {
-    const cols = Math.ceil(this.cw / 14);
-    const hexChars = '0123456789ABCDEF<>{}[]|/\\=+-*&%$#@!'.split('');
-    for (let i = 0; i < cols; i++) {
-      const numChars = 3 + Math.floor(Math.random() * 8);
-      const chars = [];
-      for (let j = 0; j < numChars; j++) {
-        chars.push({
-          char: hexChars[Math.floor(Math.random() * hexChars.length)],
-          y: Math.random() * this.ch,
-          speed: 30 + Math.random() * 80,
-          opacity: 0.1 + Math.random() * 0.4,
-        });
-      }
-      this.rainColumns.push({ chars });
-    }
-  }
-
-  private addToMap(): void {
-    // Render initial frame
-    this.renderFrame(performance.now());
-    const dataUrl = this.canvas.toDataURL('image/png');
-
-    if (this.map.getLayer(LAYER_ID)) this.map.removeLayer(LAYER_ID);
-    if (this.map.getSource(SOURCE_ID)) this.map.removeSource(SOURCE_ID);
-
-    this.map.addSource(SOURCE_ID, {
-      type: 'image',
-      url: dataUrl,
-      coordinates: this.corners,
-    });
-    this.map.addLayer({
-      id: LAYER_ID,
-      type: 'raster',
-      source: SOURCE_ID,
-      paint: { 'raster-opacity': 1, 'raster-fade-duration': 0 },
-    });
-  }
+  // -----------------------------------------------------------------------
+  // Public API
+  // -----------------------------------------------------------------------
 
   updateProgress(loaded: number, total: number): void {
-    const prevLoaded = this.loaded;
     this.loaded = loaded;
     this.total = total;
-
-    // Track newly loaded tiles
-    if (loaded > prevLoaded) {
-      // We don't know which specific tile loaded, but we'll update loadedSet from outside
-    }
   }
 
   markTileLoaded(ci: number, cj: number): void {
     const key = `${ci}_${cj}`;
     if (!this.loadedSet.has(key)) {
       this.loadedSet.add(key);
-      this.tileActivateTime.set(key, performance.now());
-      // Spawn particles at tile centre
-      this.spawnParticles(ci, cj);
+      this.tileLoadTime.set(key, performance.now());
     }
   }
 
-  private spawnParticles(ci: number, cj: number): void {
-    const col = cj - this.cjMin;
-    const row = ci - this.ciMin;
-    const cellW = this.cw / this.gridCols;
-    const cellH = this.ch / this.gridRows;
-    const cx = (col + 0.5) * cellW;
-    const cy = (row + 0.5) * cellH;
-
-    for (let i = 0; i < 12; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 20 + Math.random() * 60;
-      this.particles.push({
-        x: cx + (Math.random() - 0.5) * cellW * 0.5,
-        y: cy + (Math.random() - 0.5) * cellH * 0.5,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 30,
-        life: 0,
-        maxLife: 0.8 + Math.random() * 1.2,
-        size: 1 + Math.random() * 2,
-      });
+  destroy(): void {
+    this.destroyed = true;
+    if (this.frameId != null) cancelAnimationFrame(this.frameId);
+    const gl = this.gl;
+    if (gl) {
+      if (this.program) gl.deleteProgram(this.program);
+      if (this.vbuf) gl.deleteBuffer(this.vbuf);
+      if (this.tileTex) gl.deleteTexture(this.tileTex);
+      if (this.maskTex) gl.deleteTexture(this.maskTex);
     }
+    try {
+      if (this.map.getLayer(LAYER_ID)) this.map.removeLayer(LAYER_ID);
+      if (this.map.getSource(SOURCE_ID)) this.map.removeSource(SOURCE_ID);
+    } catch { /* map may be gone */ }
   }
 
-  private renderFrame(t: number): void {
-    const ctx = this.ctx;
-    const w = this.cw;
-    const h = this.ch;
-    const elapsed = (t - this.startTime) / 1000;
-    const progress = this.total > 0 ? this.loaded / this.total : 0;
-    const tau = Math.PI * 2;
-    const cx = this.centroidX;
-    const cy = this.centroidY;
+  // -----------------------------------------------------------------------
+  // Private: WebGL init
+  // -----------------------------------------------------------------------
 
-    ctx.clearRect(0, 0, w, h);
+  private initGL(
+    gl: WebGLRenderingContext,
+    polygon: [number, number][],
+    west: number, south: number, east: number, north: number,
+  ): void {
+    const vs = compileShader(gl, gl.VERTEX_SHADER, VERT);
+    const fs = compileShader(gl, gl.FRAGMENT_SHADER, FRAG);
+    if (!vs || !fs) return;
+    this.program = linkProgram(gl, vs, fs);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    if (!this.program) return;
 
-    // --- Clip to polygon ---
-    ctx.save();
-    ctx.beginPath();
-    for (let i = 0; i < this.polyPath.length; i++) {
-      const p = this.polyPath[i];
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    }
-    ctx.closePath();
-    ctx.clip();
-
-    // --- Dark background ---
-    ctx.fillStyle = 'rgba(0, 4, 8, 0.85)';
-    ctx.fillRect(0, 0, w, h);
-
-    // --- Tile grid ---
-    const cellW = w / this.gridCols;
-    const cellH = h / this.gridRows;
-
-    for (let r = 0; r < this.gridRows; r++) {
-      for (let c = 0; c < this.gridCols; c++) {
-        const ci = r + this.ciMin;
-        const cj = c + this.cjMin;
-        const key = `${ci}_${cj}`;
-        if (!this.chunkSet.has(key)) continue;
-
-        const x = c * cellW;
-        const y = r * cellH;
-        const isLoaded = this.loadedSet.has(key);
-        const activateTime = this.tileActivateTime.get(key);
-
-        if (isLoaded && activateTime) {
-          // Loaded tile: glowing activation effect
-          const since = (t - activateTime) / 1000;
-          const flash = Math.max(0, 1 - since * 1.5); // bright flash fading over ~0.7s
-          const pulse = 0.08 + 0.04 * Math.sin(elapsed * 3 + r * 0.5 + c * 0.7);
-
-          // Fill with cyan glow
-          ctx.fillStyle = `rgba(0, 229, 255, ${pulse + flash * 0.4})`;
-          ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2);
-
-          // Bright border flash
-          if (flash > 0) {
-            ctx.strokeStyle = `rgba(255, 255, 255, ${flash * 0.8})`;
-            ctx.lineWidth = 2;
-            ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2);
-          }
-
-          // Inner glow
-          ctx.strokeStyle = `rgba(0, 229, 255, ${0.3 + pulse})`;
-          ctx.lineWidth = 0.5;
-          ctx.strokeRect(x + 1, y + 1, cellW - 2, cellH - 2);
-        } else {
-          // Unloaded: dim cell with subtle pulse
-          const dimPulse = 0.03 + 0.015 * Math.sin(elapsed * 2 + r * 1.1 + c * 0.9);
-          ctx.fillStyle = `rgba(0, 180, 220, ${dimPulse})`;
-          ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2);
-
-          // Grid lines
-          ctx.strokeStyle = 'rgba(0, 229, 255, 0.06)';
-          ctx.lineWidth = 0.5;
-          ctx.strokeRect(x, y, cellW, cellH);
-        }
-      }
+    for (const n of ['u_time', 'u_progress', 'u_gridSize', 'u_centroid',
+      'u_aspect', 'u_tiles', 'u_mask']) {
+      this.loc[n] = gl.getUniformLocation(this.program, n);
     }
 
-    // --- Data rain in unloaded areas ---
-    ctx.font = '10px monospace';
-    const dt = 1 / 60;
-    for (let i = 0; i < this.rainColumns.length; i++) {
-      const col = this.rainColumns[i];
-      const rx = i * 14 + 7;
-      for (const ch of col.chars) {
-        ch.y += ch.speed * dt;
-        if (ch.y > h + 20) {
-          ch.y = -10;
-          ch.opacity = 0.1 + Math.random() * 0.35;
-        }
+    // Fullscreen quad
+    this.vbuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1, 1, -1, -1, 1, 1, -1, 1, 1, -1, 1,
+    ]), gl.STATIC_DRAW);
 
-        // Only draw in unloaded cells
-        const gridCol = Math.floor(rx / cellW);
-        const gridRow = Math.floor(ch.y / cellH);
-        const ci = gridRow + this.ciMin;
-        const cj = gridCol + this.cjMin;
-        const key = `${ci}_${cj}`;
-        if (this.loadedSet.has(key)) continue;
+    // Tile state texture
+    this.tileTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.tileTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.gridCols, this.gridRows,
+      0, gl.RGBA, gl.UNSIGNED_BYTE, this.tileData);
 
-        const fade = ch.opacity * (1 - progress * 0.8);
-        ctx.fillStyle = `rgba(0, 229, 255, ${fade})`;
-        ctx.fillText(ch.char, rx, ch.y);
-      }
+    // Polygon mask texture (256x256)
+    const S = 256;
+    const mc = document.createElement('canvas');
+    mc.width = S; mc.height = S;
+    const mctx = mc.getContext('2d')!;
+    mctx.fillStyle = '#000';
+    mctx.fillRect(0, 0, S, S);
+    mctx.fillStyle = '#fff';
+    mctx.beginPath();
+    for (let i = 0; i < polygon.length; i++) {
+      const u = ((polygon[i][0] - west) / (east - west)) * S;
+      const v = ((north - polygon[i][1]) / (north - south)) * S;
+      if (i === 0) mctx.moveTo(u, v); else mctx.lineTo(u, v);
     }
+    mctx.closePath();
+    mctx.fill();
 
-    // --- Radar sweep ---
-    const sweepAngle = elapsed * 1.8; // ~1 rotation per 3.5s
-    const sweepLen = Math.max(w, h) * 0.9;
+    this.maskTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mc);
 
-    // Sweep beam (fading trail)
-    for (let i = 0; i < 30; i++) {
-      const a = sweepAngle - i * 0.02;
-      const alpha = 0.15 * (1 - i / 30);
-      ctx.strokeStyle = `rgba(0, 229, 255, ${alpha})`;
-      ctx.lineWidth = 2 - i * 0.05;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.cos(a) * sweepLen, cy + Math.sin(a) * sweepLen);
-      ctx.stroke();
-    }
+    gl.viewport(0, 0, this.cw, this.ch);
+    gl.clearColor(0, 0, 0, 0);
+  }
 
-    // Bright tip
-    const tipX = cx + Math.cos(sweepAngle) * sweepLen * 0.95;
-    const tipY = cy + Math.sin(sweepAngle) * sweepLen * 0.95;
-    const tipGlow = ctx.createRadialGradient(tipX, tipY, 0, tipX, tipY, 20);
-    tipGlow.addColorStop(0, 'rgba(255, 255, 255, 0.6)');
-    tipGlow.addColorStop(0.3, 'rgba(0, 229, 255, 0.3)');
-    tipGlow.addColorStop(1, 'rgba(0, 229, 255, 0)');
-    ctx.fillStyle = tipGlow;
-    ctx.fillRect(tipX - 20, tipY - 20, 40, 40);
+  // -----------------------------------------------------------------------
+  // Private: render one frame
+  // -----------------------------------------------------------------------
 
-    // --- Horizontal scan line ---
-    const scanY = ((elapsed * 60) % (h + 80)) - 40;
-    const scanGrad = ctx.createLinearGradient(0, scanY - 30, 0, scanY + 30);
-    scanGrad.addColorStop(0, 'rgba(0, 229, 255, 0)');
-    scanGrad.addColorStop(0.4, 'rgba(0, 229, 255, 0.08)');
-    scanGrad.addColorStop(0.5, 'rgba(0, 229, 255, 0.25)');
-    scanGrad.addColorStop(0.6, 'rgba(0, 229, 255, 0.08)');
-    scanGrad.addColorStop(1, 'rgba(0, 229, 255, 0)');
-    ctx.fillStyle = scanGrad;
-    ctx.fillRect(0, scanY - 30, w, 60);
+  private renderFrame(): void {
+    const gl = this.gl;
+    if (!gl || !this.program) return;
 
-    // Bright scanline
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.5)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, scanY);
-    ctx.lineTo(w, scanY);
-    ctx.stroke();
+    // --- WebGL pass ---
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.program);
 
-    // --- Particles ---
-    const particleDt = dt;
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
-      p.life += particleDt;
-      if (p.life > p.maxLife) {
-        this.particles.splice(i, 1);
-        continue;
-      }
-      p.x += p.vx * particleDt;
-      p.y += p.vy * particleDt;
-      p.vy -= 10 * particleDt; // float upward
+    const t = (performance.now() - this.startTime) / 1000;
+    const prog = this.total > 0 ? this.loaded / this.total : 0;
 
-      const lifeRatio = p.life / p.maxLife;
-      const alpha = lifeRatio < 0.2
-        ? lifeRatio / 0.2
-        : 1 - (lifeRatio - 0.2) / 0.8;
+    gl.uniform1f(this.loc['u_time']!, t);
+    gl.uniform1f(this.loc['u_progress']!, prog);
+    gl.uniform2f(this.loc['u_gridSize']!, this.gridCols, this.gridRows);
+    gl.uniform2f(this.loc['u_centroid']!, this.centroidUV[0], this.centroidUV[1]);
+    gl.uniform1f(this.loc['u_aspect']!, this.aspectRatio);
 
-      ctx.fillStyle = `rgba(0, 229, 255, ${alpha * 0.8})`;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * (1 - lifeRatio * 0.5), 0, tau);
-      ctx.fill();
-    }
+    this.refreshTileData();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.tileTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.gridCols, this.gridRows,
+      0, gl.RGBA, gl.UNSIGNED_BYTE, this.tileData);
+    gl.uniform1i(this.loc['u_tiles']!, 0);
 
-    // --- Polygon edge glow ---
-    ctx.strokeStyle = `rgba(0, 229, 255, ${0.4 + 0.2 * Math.sin(elapsed * 3)})`;
-    ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(0, 229, 255, 0.6)';
-    ctx.shadowBlur = 8;
-    ctx.beginPath();
-    for (let i = 0; i < this.polyPath.length; i++) {
-      const p = this.polyPath[i];
-      if (i === 0) ctx.moveTo(p.x, p.y);
-      else ctx.lineTo(p.x, p.y);
-    }
-    ctx.closePath();
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    gl.uniform1i(this.loc['u_mask']!, 1);
 
-    // --- Corner brackets ---
-    const bLen = Math.min(w, h) * 0.06;
-    const bInset = 8;
-    ctx.strokeStyle = `rgba(0, 229, 255, ${0.5 + 0.3 * Math.sin(elapsed * 2.5)})`;
-    ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(0, 229, 255, 0.5)';
-    ctx.shadowBlur = 6;
-    // TL
-    ctx.beginPath(); ctx.moveTo(bInset, bInset + bLen); ctx.lineTo(bInset, bInset); ctx.lineTo(bInset + bLen, bInset); ctx.stroke();
-    // TR
-    ctx.beginPath(); ctx.moveTo(w - bInset - bLen, bInset); ctx.lineTo(w - bInset, bInset); ctx.lineTo(w - bInset, bInset + bLen); ctx.stroke();
-    // BL
-    ctx.beginPath(); ctx.moveTo(bInset, h - bInset - bLen); ctx.lineTo(bInset, h - bInset); ctx.lineTo(bInset + bLen, h - bInset); ctx.stroke();
-    // BR
-    ctx.beginPath(); ctx.moveTo(w - bInset - bLen, h - bInset); ctx.lineTo(w - bInset, h - bInset); ctx.lineTo(w - bInset, h - bInset - bLen); ctx.stroke();
-    ctx.shadowBlur = 0;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbuf);
+    const posLoc = gl.getAttribLocation(this.program, 'a_pos');
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
 
-    // --- HUD centre: progress ring (aspect-corrected at polygon centroid) ---
-    ctx.save();
-    ctx.translate(this.centroidX, this.centroidY);
-    ctx.scale(this.hudScaleX, 1); // correct for Mercator distortion
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-    const ringR = Math.min(w, h) * 0.12;
+    // --- 2D compositing: copy WebGL + draw HUD text ---
+    const ctx = this.outCtx;
+    ctx.clearRect(0, 0, this.cw, this.ch);
+    ctx.drawImage(this.glCanvas, 0, 0);
 
-    // Spinning outer ring
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.12)';
-    ctx.lineWidth = 1;
-    const spin1 = elapsed * 1.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, ringR * 1.3, spin1, spin1 + tau * 0.65);
-    ctx.stroke();
-
-    // Counter-spin dashed
-    ctx.setLineDash([3, 6]);
-    ctx.strokeStyle = 'rgba(0, 180, 220, 0.1)';
-    const spin2 = -elapsed * 0.8;
-    ctx.beginPath();
-    ctx.arc(0, 0, ringR * 1.5, spin2, spin2 + tau);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Tick marks
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.08)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < 48; i++) {
-      const a = (i / 48) * tau;
-      const inner = ringR * 1.05;
-      const outer = i % 12 === 0 ? ringR * 1.2 : ringR * 1.1;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
-      ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
-      ctx.stroke();
-    }
-
-    // Progress arc
-    const arcStart = -Math.PI / 2;
-    const arcEnd = progress * tau;
-
-    // Track
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.05)';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.arc(0, 0, ringR, 0, tau);
-    ctx.stroke();
-
-    if (progress > 0) {
-      // Glow
-      ctx.strokeStyle = 'rgba(0, 229, 255, 0.15)';
-      ctx.lineWidth = 10;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.arc(0, 0, ringR, arcStart, arcStart + arcEnd);
-      ctx.stroke();
-
-      // Main arc
-      ctx.strokeStyle = 'rgba(0, 229, 255, 0.9)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(0, 0, ringR, arcStart, arcStart + arcEnd);
-      ctx.stroke();
-      ctx.lineCap = 'butt';
-
-      // Arc tip glow
-      if (progress < 1) {
-        const tipA = arcStart + arcEnd;
-        const tx2 = Math.cos(tipA) * ringR;
-        const ty2 = Math.sin(tipA) * ringR;
-        const tg = ctx.createRadialGradient(tx2, ty2, 0, tx2, ty2, 8);
-        tg.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
-        tg.addColorStop(0.4, 'rgba(0, 229, 255, 0.4)');
-        tg.addColorStop(1, 'rgba(0, 229, 255, 0)');
-        ctx.fillStyle = tg;
-        ctx.fillRect(tx2 - 8, ty2 - 8, 16, 16);
-      }
-    }
-
-    // Percentage — scale text inversely so font renders at correct size
+    // HUD text at centroid (with Mercator correction)
+    const cx = this.centroidUV[0] * this.cw;
+    const cy = this.centroidUV[1] * this.ch;
+    const progress = prog;
     const pct = Math.round(progress * 100);
-    const fontSize = Math.max(14, Math.round(ringR * 0.7));
+    const elapsed = (performance.now() - this.startTime) / 1000;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(this.hudScaleX, 1);
+
+    // Background panel — large, high-contrast
+    const fontSize = Math.max(20, Math.round(Math.min(this.cw, this.ch) * 0.10));
+    const pw = fontSize * 2.8, ph = fontSize * 1.8;
+    ctx.fillStyle = 'rgba(0, 2, 8, 0.92)';
+    ctx.strokeStyle = `rgba(0, 229, 255, ${0.35 + 0.15 * Math.sin(elapsed * 2)})`;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(0, 229, 255, 0.3)';
+    ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.roundRect(-pw, -ph, pw * 2, ph * 2, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Percentage — big and glowing
     ctx.font = `bold ${fontSize}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(0, 229, 255, 0.6)';
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = `rgba(0, 229, 255, ${0.85 + 0.15 * Math.sin(elapsed * 4)})`;
-    ctx.fillText(`${pct}%`, 0, -fontSize * 0.15);
+    ctx.shadowColor = 'rgba(0, 229, 255, 0.8)';
+    ctx.shadowBlur = 14;
+    ctx.fillStyle = `rgba(0, 229, 255, ${0.9 + 0.1 * Math.sin(elapsed * 4)})`;
+    ctx.fillText(`${pct}%`, 0, -fontSize * 0.4);
     ctx.shadowBlur = 0;
 
-    // Sub-label
-    const subSize = Math.max(8, Math.round(ringR * 0.22));
-    ctx.font = `${subSize}px monospace`;
-    ctx.fillStyle = `rgba(0, 229, 255, ${0.3 + 0.1 * Math.sin(elapsed * 2)})`;
-    const labels = ['ACQUIRING', 'EMBEDDING', 'SCANNING', 'ANALYSING'];
-    const labelIdx = Math.floor(elapsed / 2) % labels.length;
-    ctx.fillText(labels[labelIdx], 0, fontSize * 0.55);
+    // Status label
+    const subSize = Math.max(10, Math.round(fontSize * 0.34));
+    ctx.font = `bold ${subSize}px monospace`;
+    ctx.fillStyle = 'rgba(0, 229, 255, 0.6)';
+    ctx.letterSpacing = '3px';
+    const labelIdx = Math.floor(elapsed / 2) % this.labels.length;
+    ctx.fillText(this.labels[labelIdx], 0, fontSize * 0.35);
 
     // Tile count
-    const countSize = Math.max(7, Math.round(ringR * 0.18));
+    const countSize = Math.max(9, Math.round(fontSize * 0.3));
     ctx.font = `${countSize}px monospace`;
-    ctx.fillStyle = 'rgba(0, 229, 255, 0.2)';
-    ctx.fillText(`${this.loaded}/${this.total} TILES`, 0, fontSize * 0.55 + countSize * 1.3);
+    ctx.fillStyle = 'rgba(0, 229, 255, 0.4)';
+    ctx.fillText(`${this.loaded}/${this.total} TILES`, 0, fontSize * 0.35 + countSize * 1.8);
 
-    ctx.restore(); // end HUD transform
+    ctx.restore();
+  }
 
-    // --- Scanline noise overlay (subtle) ---
-    const imgData = ctx.getImageData(0, 0, w, h);
-    const data = imgData.data;
-    for (let row = 0; row < h; row += 2) {
-      const base = row * w * 4;
-      for (let col = 0; col < w * 4; col += 4) {
-        const idx = base + col;
-        // Darken every other line slightly
-        data[idx] = Math.round(data[idx] * 0.92);
-        data[idx + 1] = Math.round(data[idx + 1] * 0.92);
-        data[idx + 2] = Math.round(data[idx + 2] * 0.92);
+  private refreshTileData(): void {
+    const now = performance.now();
+    for (let r = 0; r < this.gridRows; r++) {
+      for (let c = 0; c < this.gridCols; c++) {
+        const key = `${r + this.ciMin}_${c + this.cjMin}`;
+        const idx = (r * this.gridCols + c) * 4;
+        if (this.loadedSet.has(key)) {
+          this.tileData[idx] = 255;
+          const age = Math.min(1, (now - (this.tileLoadTime.get(key) ?? now)) / 3000);
+          this.tileData[idx + 1] = Math.round(age * 255);
+        } else {
+          this.tileData[idx] = 0;
+          this.tileData[idx + 1] = 0;
+        }
+        this.tileData[idx + 3] = 255;
       }
     }
-    ctx.putImageData(imgData, 0, 0);
+  }
 
-    ctx.restore(); // remove polygon clip
+  // -----------------------------------------------------------------------
+  // Private: MapLibre ImageSource
+  // -----------------------------------------------------------------------
+
+  private addToMap(): void {
+    this.renderFrame();
+    const dataUrl = this.outCanvas.toDataURL('image/png');
+
+    if (this.map.getLayer(LAYER_ID)) this.map.removeLayer(LAYER_ID);
+    if (this.map.getSource(SOURCE_ID)) this.map.removeSource(SOURCE_ID);
+
+    this.map.addSource(SOURCE_ID, {
+      type: 'image', url: dataUrl, coordinates: this.corners,
+    });
+    this.map.addLayer({
+      id: LAYER_ID, type: 'raster', source: SOURCE_ID,
+      paint: { 'raster-opacity': 1, 'raster-fade-duration': 0 },
+    });
   }
 
   private animate = (t: number): void => {
     if (this.destroyed) return;
-    this.renderFrame(t);
+    this.renderFrame();
 
     if (t - this.lastPush >= PUSH_INTERVAL && !this.pendingUpdate) {
       this.pendingUpdate = true;
       this.lastPush = t;
-      const url = this.canvas.toDataURL('image/png');
+      const url = this.outCanvas.toDataURL('image/png');
       const src = this.map.getSource(SOURCE_ID) as
-        { updateImage?: (opts: { url: string; coordinates: [number, number][] }) => unknown } | undefined;
+        { updateImage?: (o: { url: string; coordinates: [number, number][] }) => unknown } | undefined;
       try {
         const result = src?.updateImage?.({ url, coordinates: this.corners });
         if (result && typeof (result as any).then === 'function') {
@@ -579,16 +591,4 @@ export class RegionLoadingAnimation {
 
     this.frameId = requestAnimationFrame(this.animate);
   };
-
-  destroy(): void {
-    this.destroyed = true;
-    if (this.frameId != null) {
-      cancelAnimationFrame(this.frameId);
-      this.frameId = null;
-    }
-    try {
-      if (this.map.getLayer(LAYER_ID)) this.map.removeLayer(LAYER_ID);
-      if (this.map.getSource(SOURCE_ID)) this.map.removeSource(SOURCE_ID);
-    } catch { /* map may already be gone */ }
-  }
 }

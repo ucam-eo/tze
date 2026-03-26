@@ -1,21 +1,29 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { sourceManager } from '../stores/zarr';
   import { simScores, simRefEmbedding, simSelectedPixel, simThreshold, simEmbeddingTileCount } from '../stores/similarity';
   import { roiLoading } from '../stores/drawing';
-  import { subsampleEmbeddings, subsampleUniform } from '../lib/umap-subsample';
+  import { subsampleEmbeddings } from '../lib/umap-subsample';
   import { PointCloudRenderer } from '../lib/point-cloud-renderer';
   import type { UmapWorkerInput, UmapWorkerOutput } from '../lib/umap-worker';
 
   interface Props { visible: boolean; }
   let { visible }: Props = $props();
 
-  let canvasEl: HTMLCanvasElement;
+  let canvasEl = $state<HTMLCanvasElement>(undefined!);
   let renderer: PointCloudRenderer | null = null;
   let worker: Worker | null = null;
   let status = $state('');
   let currentScores: Float32Array | null = null;
   let currentRefIndex = -1;
+
+  /** Loading state: idle → sampling → computing → ready */
+  let umapState = $state<'idle' | 'sampling' | 'computing' | 'ready'>('idle');
+  let sampledCount = $state(0);
+  let computeStartTime = $state(0);
+  let computeElapsed = $state(0);
+  let computeTimerId: ReturnType<typeof setInterval> | undefined;
 
   const DPR = 2;
   const MIN_W = 200;
@@ -83,22 +91,28 @@
 
   function killWorker() {
     if (worker) { worker.terminate(); worker = null; }
+    clearInterval(computeTimerId);
   }
 
   const MAX_UMAP_POINTS = 5000;
 
   async function runUmap() {
-    const mgr = $sourceManager;
+    const mgr = get(sourceManager);
     if (!mgr || mgr.totalTileCount() === 0) return;
     const regions = mgr.getEmbeddingRegions();
     if (regions.size === 0) return;
 
     killWorker();
+    umapState = 'sampling';
+    sampledCount = 0;
     status = 'Sampling...';
 
-    const simResults = $simScores;
-    const ref = $simRefEmbedding;
-    const pixel = $simSelectedPixel;
+    const simResults = get(simScores);
+    const ref = get(simRefEmbedding);
+    const pixel = get(simSelectedPixel);
+
+    // Need scores to do weighted UMAP — skip if not yet computed
+    if (simResults.size === 0 || !ref || !pixel) return;
 
     // Count loaded tiles across all zones for proportional budgeting
     let totalLoadedTiles = 0;
@@ -123,9 +137,8 @@
       const budget = Math.max(10, Math.round((zoneTiles / totalLoadedTiles) * MAX_UMAP_POINTS));
 
       const simResult = simResults.get(zoneId);
-      const sample = (simResult && ref && pixel)
-        ? subsampleEmbeddings(region, simResult, ref, pixel, budget)
-        : subsampleUniform(region, budget);
+      if (!simResult) continue;
+      const sample = subsampleEmbeddings(region, simResult, ref, pixel, budget);
 
       if (sample.count === 0) continue;
       if (sample.refIndex >= 0) refIndex = totalCount + sample.refIndex;
@@ -134,9 +147,10 @@
       allScores.push(sample.scores);
       totalCount += sample.count;
       nBands = sample.nBands;
+      sampledCount = totalCount;
     }
 
-    if (totalCount < 4) { status = 'Too few points'; return; }
+    if (totalCount < 4) { status = 'Too few points'; umapState = 'idle'; return; }
 
     // Merge all zones into single buffers
     const embeddings = new Float32Array(totalCount * nBands);
@@ -159,18 +173,23 @@
       withScores[scores.length] = 1.0;
       refIndex = totalCount;
       totalCount++;
-      // Use the extended buffers
-      const sample = { embeddings: withRef, scores: withScores, refIndex, count: totalCount, nBands };
-      launchUmapWorker(sample);
+      launchUmapWorker({ embeddings: withRef, scores: withScores, refIndex, count: totalCount, nBands });
       return;
     }
 
-    const sample = { embeddings, scores, refIndex, count: totalCount, nBands };
-    launchUmapWorker(sample);
+    launchUmapWorker({ embeddings, scores, refIndex, count: totalCount, nBands });
   }
 
   function launchUmapWorker(sample: { embeddings: Float32Array; scores: Float32Array; refIndex: number; count: number; nBands: number }) {
+    umapState = 'computing';
+    computeStartTime = performance.now();
+    computeElapsed = 0;
     status = `UMAP ${sample.count} pts...`;
+
+    // Tick timer for elapsed display
+    computeTimerId = setInterval(() => {
+      computeElapsed = Math.round((performance.now() - computeStartTime) / 100) / 10;
+    }, 100);
 
     const w = new Worker(new URL('../lib/umap-worker.ts', import.meta.url), { type: 'module' });
     worker = w;
@@ -182,15 +201,17 @@
 
     w.onmessage = (e: MessageEvent<UmapWorkerOutput>) => {
       if (worker !== w) return;
+      clearInterval(computeTimerId);
       const { positions } = e.data;
       currentScores = sample.scores;
       currentRefIndex = sample.refIndex;
-      const colors = buildColors(sample.scores, sample.refIndex, $simThreshold);
+      const colors = buildColors(sample.scores, sample.refIndex, get(simThreshold));
 
       if (!renderer) renderer = new PointCloudRenderer(canvasEl);
       renderer.setData(positions, colors, sample.refIndex);
       renderer.start();
 
+      umapState = 'ready';
       status = `${sample.count} points`;
       w.terminate();
       worker = null;
@@ -198,20 +219,26 @@
 
     w.onerror = () => {
       if (worker !== w) return;
+      clearInterval(computeTimerId);
+      umapState = 'idle';
       status = 'UMAP failed';
       w.terminate();
       worker = null;
     };
   }
 
-  // Trigger UMAP when data changes — skip during ROI batch loading
+  // Trigger UMAP when data changes — debounced to avoid double-fire.
+  // Only tracks simScores, tileCount, and roiLoading — NOT simSelectedPixel
+  // or simRefEmbedding (those are read non-reactively inside runUmap via get()).
+  let umapTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     const _s = $simScores;
-    const _r = $simRefEmbedding;
-    const _p = $simSelectedPixel;
     const _t = $simEmbeddingTileCount;
     const loading = $roiLoading;
-    if (_t > 0 && !loading) runUmap();
+    clearTimeout(umapTimer);
+    if (_t > 0 && !loading) {
+      umapTimer = setTimeout(runUmap, 60);
+    }
   });
 
   // Recolor on threshold change
@@ -282,6 +309,7 @@
   onMount(() => {
     return () => {
       killWorker();
+      clearTimeout(umapTimer);
       renderer?.dispose();
       renderer = null;
     };
@@ -309,6 +337,24 @@
 
   <div class="umap-body">
     <canvas bind:this={canvasEl} class="umap-canvas"></canvas>
+    {#if umapState === 'sampling' || umapState === 'computing'}
+      <!-- Loading overlay on top of canvas -->
+      <div class="umap-loading">
+        <div class="umap-ring-outer">
+          <div class="umap-ring-inner"></div>
+        </div>
+        <div class="umap-loading-status">
+          {#if umapState === 'sampling'}
+            <span class="umap-loading-label">SAMPLING EMBEDDINGS</span>
+            <span class="umap-loading-detail">{sampledCount.toLocaleString()} points collected</span>
+          {:else}
+            <span class="umap-loading-label">COMPUTING PROJECTION</span>
+            <span class="umap-loading-detail">{sampledCount.toLocaleString()} pts &middot; {computeElapsed.toFixed(1)}s</span>
+          {/if}
+        </div>
+        <div class="umap-dots"></div>
+      </div>
+    {/if}
   </div>
 
   <div class="umap-footer" data-tutorial="umap-threshold">
@@ -365,6 +411,7 @@
     align-items: center;
     justify-content: center;
     overflow: hidden;
+    position: relative;
   }
 
   .umap-canvas {
@@ -375,6 +422,86 @@
   }
 
   .umap-canvas:active { cursor: grabbing; }
+
+  /* --- Loading overlay --- */
+  .umap-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    background: rgba(0, 2, 8, 0.6);
+  }
+
+  /* Dual counter-spinning rings */
+  .umap-ring-outer {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    border: 2px solid transparent;
+    border-top-color: rgba(0, 229, 255, 0.8);
+    border-right-color: rgba(0, 229, 255, 0.25);
+    border-radius: 50%;
+    animation: umap-spin 1.2s linear infinite;
+    box-shadow: 0 0 16px rgba(0, 229, 255, 0.15);
+  }
+
+  .umap-ring-inner {
+    position: absolute;
+    inset: 7px;
+    border: 2px solid transparent;
+    border-bottom-color: rgba(255, 0, 128, 0.6);
+    border-left-color: rgba(255, 0, 128, 0.2);
+    border-radius: 50%;
+    animation: umap-spin 0.8s linear infinite reverse;
+  }
+
+  @keyframes umap-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .umap-loading-status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    z-index: 1;
+  }
+
+  .umap-loading-label {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: rgba(0, 229, 255, 0.7);
+    text-transform: uppercase;
+    animation: umap-pulse 2s ease-in-out infinite;
+  }
+
+  .umap-loading-detail {
+    font-size: 9px;
+    color: rgba(0, 229, 255, 0.35);
+    font-variant-numeric: tabular-nums;
+  }
+
+  @keyframes umap-pulse {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 1; }
+  }
+
+  /* Subtle animated dot grid background */
+  .umap-dots {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(0, 229, 255, 0.08) 1px, transparent 1px);
+    background-size: 16px 16px;
+    animation: umap-dots-shift 4s linear infinite;
+    pointer-events: none;
+  }
+
+  @keyframes umap-dots-shift {
+    to { background-position: 16px 16px; }
+  }
 
   .umap-footer {
     display: flex;

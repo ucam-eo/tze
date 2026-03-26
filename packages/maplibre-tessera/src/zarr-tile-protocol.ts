@@ -13,6 +13,21 @@
  */
 import * as zarr from 'zarrita';
 
+function abortError(): DOMException {
+  return new DOMException('Tile request aborted', 'AbortError');
+}
+
+/** Race a promise against an AbortSignal. Rejects immediately if already aborted. */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      signal.addEventListener('abort', () => reject(abortError()), { once: true });
+    }),
+  ]);
+}
+
 interface PyramidLevel {
   arr: zarr.Array<zarr.DataType>;
   shape: [number, number, number]; // [lat, lon, band]
@@ -91,8 +106,11 @@ const TILE_SIZE = 256;
  * e.g. `zarr://https://example.com/global_rgb.zarr/rgb/{z}/{x}/{y}`
  */
 export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, handler: (params: { url: string }, abortController: AbortController) => Promise<{ data: ArrayBuffer }>) => void }): void {
-  maplibregl.addProtocol('zarr', async (params: { url: string }, _abortController: AbortController) => {
+  maplibregl.addProtocol('zarr', async (params: { url: string }, abortController: AbortController) => {
+    const signal = abortController.signal;
     try {
+    if (signal.aborted) throw abortError();
+
     // Parse: zarr://STORE_URL/VARIABLE/{z}/{x}/{y}
     const raw = params.url.replace('zarr://', '');
     const parts = raw.split('/');
@@ -103,6 +121,7 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
     const storeUrl = parts.join('/');
 
     const levels = await getOrOpenPyramid(storeUrl, variable);
+    if (signal.aborted) throw abortError();
     const level = selectLevel(levels, z);
     const bounds = tileBounds(z, x, y);
 
@@ -127,18 +146,21 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
       return { data: new ArrayBuffer(0) };
     }
 
-    // Fetch the region from Zarr — dimensions are [lat, lon, band]
-    const result = await zarr.get(level.arr, [
-      zarr.slice(r0, r1),
-      zarr.slice(c0, c1),
-      null,
-    ]);
+    // Fetch the region from Zarr — race against abort signal so cancelled
+    // tiles don't block the browser's connection pool.
+    const result = await raceAbort(
+      zarr.get(level.arr, [zarr.slice(r0, r1), zarr.slice(c0, c1), null]),
+      signal,
+    );
+    if (signal.aborted) throw abortError();
 
     const rawData = result.data as Uint8Array;
     const src = new Uint8Array(rawData.buffer, rawData.byteOffset, rawData.byteLength);
     const srcH = r1 - r0;
     const srcW = c1 - c0;
     const nBands = level.shape[2]; // typically 4 (RGBA)
+
+    if (signal.aborted) throw abortError();
 
     // Render to RGBA tile via canvas and encode as PNG.
     // MapLibre tiles are in Web Mercator but our source data is equirectangular
@@ -187,6 +209,7 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
     for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
     return { data: bytes.buffer };
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
       console.error('[zarr-protocol] Tile load failed:', params.url, err);
       throw err;
     }

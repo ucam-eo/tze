@@ -15,6 +15,45 @@ import type {
 } from './types.js';
 
 
+// ---------------------------------------------------------------------------
+// Geometry helpers for chunk–polygon overlap
+// ---------------------------------------------------------------------------
+
+/** Do two line segments (a→b) and (c→d) properly cross each other? */
+function segsCross(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number,
+): boolean {
+  const d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  const d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+      && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** Does any edge of the polygon ring cross the axis-aligned rectangle? */
+function polyEdgeCrossesRect(
+  ring: [number, number][],
+  minE: number, maxE: number, minN: number, maxN: number,
+): boolean {
+  // 4 rectangle edges
+  const rectEdges: [number, number, number, number][] = [
+    [minE, minN, maxE, minN], // bottom
+    [maxE, minN, maxE, maxN], // right
+    [maxE, maxN, minE, maxN], // top
+    [minE, maxN, minE, minN], // left
+  ];
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [ax, ay] = ring[j];
+    const [bx, by] = ring[i];
+    for (const [cx, cy, dx, dy] of rectEdges) {
+      if (segsCross(ax, ay, bx, by, cx, cy, dx, dy)) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Options for {@link TesseraSource.loadChunks}.
  */
@@ -411,10 +450,13 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
         const cMaxN = originN - ci * chunkH;
         const cMinN = cMaxN - chunkH;
 
-        // Test overlap: chunk center in polygon, or any polygon vertex in chunk
+        // Test overlap: chunk center/corners in polygon, polygon verts in chunk,
+        // or polygon edges crossing chunk edges.
         const centerE = (cMinE + cMaxE) / 2;
         const centerN = (cMinN + cMaxN) / 2;
-        let overlaps = pointInPoly(centerE, centerN);
+        let overlaps = pointInPoly(centerE, centerN)
+          || pointInPoly(cMinE, cMinN) || pointInPoly(cMaxE, cMinN)
+          || pointInPoly(cMinE, cMaxN) || pointInPoly(cMaxE, cMaxN);
         if (!overlaps) {
           for (const [e, n] of utmRing) {
             if (e >= cMinE && e <= cMaxE && n >= cMinN && n <= cMaxN) {
@@ -422,6 +464,10 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
               break;
             }
           }
+        }
+        // Polygon edge crosses chunk rectangle (catches thin sliver intersections)
+        if (!overlaps) {
+          overlaps = polyEdgeCrossesRect(utmRing, cMinE, cMaxE, cMinN, cMaxN);
         }
 
         if (overlaps) result.push({ ci, cj });

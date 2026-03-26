@@ -28,7 +28,7 @@
   import { registerAllTutorials } from './lib/tutorials/index';
   import { TerraDraw, TerraDrawPolygonMode, TerraDrawRectangleMode } from 'terra-draw';
   import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
-  import { drawMode, roiDrawing, roiRegions, addRegion, setConfirmLargeRegion } from './stores/drawing';
+  import { drawMode, roiDrawing, roiRegions, roiLoading, addRegion, setConfirmLargeRegion } from './stores/drawing';
   import ConfirmModal from './components/ConfirmModal.svelte';
 
   let mapContainer: HTMLDivElement;
@@ -634,7 +634,7 @@
 </div>
 
 <!-- UMAP floating window (outside sidebar to avoid backdrop-filter clipping) -->
-<UmapCloud visible={$activeTool === 'similarity' && $simEmbeddingTileCount > 0} />
+<UmapCloud visible={$activeTool === 'similarity' && $simEmbeddingTileCount > 0 && !$roiLoading} />
 
 <!-- Tutorial overlay -->
 <TutorialOverlay {similarityRef} onOpenOsm={(opts) => { osmAutoImport = opts?.autoImport ?? false; osmModalOpen = true; }} onCloseOsm={() => { osmModalOpen = false; osmAutoImport = false; }} onSwitchBasemap={switchBasemap} />

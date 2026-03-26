@@ -3,6 +3,7 @@
   import { sourceManager, displayManager } from '../stores/zarr';
   import { simScores, simRefEmbedding, simSelectedPixel, simThreshold, simEmbeddingTileCount } from '../stores/similarity';
   import { roiLoading } from '../stores/drawing';
+  import { activeTool } from '../stores/tools';
   import { computeSimilarityScores, renderSimilarityCanvas } from '@ucam-eo/tessera-tasks';
 
   let isComputing = $state(false);
@@ -21,7 +22,8 @@
     return () => mgr.off('embeddings-loaded', handler);
   });
 
-  // Recompute similarity when ROI loading finishes (transitions from loading to idle)
+  // When ROI loading finishes, auto-select a reference pixel if none exists,
+  // then compute similarity. This ensures UMAP always has scores to work with.
   let wasLoading = false;
   $effect(() => {
     const loading = $roiLoading;
@@ -29,9 +31,71 @@
       wasLoading = true;
     } else if (wasLoading) {
       wasLoading = false;
-      if ($simRefEmbedding && $simSelectedPixel) runCompute();
+      if (!$simRefEmbedding || !$simSelectedPixel) {
+        // Auto-select a random pixel as reference
+        if (get(activeTool) === 'similarity') autoSelectPixel();
+      } else {
+        runCompute();
+      }
     }
   });
+
+  /** Pick a random valid pixel from the loaded embeddings and set it as reference. */
+  async function autoSelectPixel() {
+    const mgr = $sourceManager;
+    if (!mgr) return;
+    const regions = mgr.getEmbeddingRegions();
+    if (regions.size === 0) return;
+
+    // Find a random valid pixel
+    for (const [zoneId, region] of regions) {
+      const tilePixels = region.tileW * region.tileH;
+      // Collect all valid tile indices
+      const loadedTiles: number[] = [];
+      for (let t = 0; t < region.loaded.length; t++) {
+        if (region.loaded[t]) loadedTiles.push(t);
+      }
+      if (loadedTiles.length === 0) continue;
+
+      // Pick a random loaded tile, then a random valid pixel in it
+      const shuffled = loadedTiles.sort(() => Math.random() - 0.5);
+      for (const t of shuffled) {
+        const base = t * tilePixels * region.nBands;
+        // Try a few random pixels in this tile
+        for (let attempt = 0; attempt < 20; attempt++) {
+          const pixelIdx = Math.floor(Math.random() * tilePixels);
+          const offset = base + pixelIdx * region.nBands;
+          if (isNaN(region.emb[offset])) continue;
+
+          // Found a valid pixel — get its chunk coords
+          const ci = region.ciMin + Math.floor(t / region.gridCols);
+          const cj = region.cjMin + (t % region.gridCols);
+          const row = Math.floor(pixelIdx / region.tileW);
+          const col = pixelIdx % region.tileW;
+          const embedding = region.emb.slice(offset, offset + region.nBands);
+
+          // Reverse-project to lng/lat
+          const src = await mgr.getSource(zoneId);
+          const meta = src.metadata;
+          const proj = src.projection;
+          if (!meta || !proj) continue;
+
+          const cs = meta.chunkShape;
+          const tf = meta.transform;
+          const globalRow = ci * cs[0] + row;
+          const globalCol = cj * cs[1] + col;
+          const easting = tf[2] + (globalCol + 0.5) * tf[0];
+          const northing = tf[5] - (globalRow + 0.5) * tf[0];
+          const [lng, lat] = proj.inverse(easting, northing);
+
+          $simSelectedPixel = { ci, cj, row, col, lng, lat };
+          $simRefEmbedding = embedding;
+          runCompute();
+          return;
+        }
+      }
+    }
+  }
 
   /** Re-render similarity overlays from existing scores (e.g. when switching back to this tab). */
   export function restoreOverlays() {
