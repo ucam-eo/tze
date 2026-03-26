@@ -80,12 +80,9 @@
         const [zW, zS, zE, zN] = zone.bbox;
         if (zE < vW || zW > vE || zN < vS || zS > vN) continue;
 
-        // Open source if needed
-        let src = mgr.getOpenSource(zone.id);
-        if (!src) {
-          try { src = await mgr.getSource(zone.id); } catch { continue; }
-          if (myGen !== gen) return;
-        }
+        // Only use already-open sources — no network requests during grid build
+        const src = mgr.getOpenSource(zone.id);
+        if (!src) continue;
         const meta = src.metadata;
         const proj = src.projection;
         if (!meta || !proj) continue;
