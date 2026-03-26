@@ -102,48 +102,78 @@
         if (!meta || !proj) continue;
 
         const [H, W] = meta.shape;
-        const [chunkH, chunkW] = meta.chunkShape;
-        const nRows = Math.ceil(H / chunkH);
-        const nCols = Math.ceil(W / chunkW);
-        const t = meta.transform; // [pixelW, 0, originX, 0, -pixelH, originY]
+        const [shardH, shardW] = meta.chunkShape;  // shard size (4096×4096)
+        const t = meta.transform;
         const px = t[0];
         const originE = t[2];
         const originN = t[5];
 
         // Convert viewport corners to this zone's UTM
-        // Clamp to zone bbox to avoid projection distortion outside the zone
         const clampLng = (v: number) => Math.max(zW, Math.min(zE, v));
         const clampLat = (v: number) => Math.max(zS, Math.min(zN, v));
-        const corners = [
+        const utmCorners = [
           proj.forward(clampLng(vW), clampLat(vN)),
           proj.forward(clampLng(vE), clampLat(vN)),
           proj.forward(clampLng(vW), clampLat(vS)),
           proj.forward(clampLng(vE), clampLat(vS)),
         ];
-        const minE = Math.min(...corners.map(c => c[0]));
-        const maxE = Math.max(...corners.map(c => c[0]));
-        const minN = Math.min(...corners.map(c => c[1]));
-        const maxN = Math.max(...corners.map(c => c[1]));
+        const minE = Math.min(...utmCorners.map(c => c[0]));
+        const maxE = Math.max(...utmCorners.map(c => c[0]));
+        const minN = Math.min(...utmCorners.map(c => c[1]));
+        const maxN = Math.max(...utmCorners.map(c => c[1]));
 
-        // Convert UTM bounds to chunk index range
-        const cjMin = Math.max(0, Math.floor((minE - originE) / (chunkW * px)));
-        const cjMax = Math.min(nCols - 1, Math.floor((maxE - originE) / (chunkW * px)));
-        const ciMin = Math.max(0, Math.floor((originN - maxN) / (chunkH * px)));
-        const ciMax = Math.min(nRows - 1, Math.floor((originN - minN) / (chunkH * px)));
+        // Pick grid cell size based on viewport width:
+        // - Wide view (>100km): shard grid (4096 px = ~41km)
+        // - Medium (<100km): 512px grid (~5km)
+        // - Close (<10km): 128px grid (~1.3km)
+        // - Very close (<2km): 32px grid (~320m)
+        const viewWidth = maxE - minE;
+        let cellPx: number;
+        if (viewWidth > 100_000) cellPx = shardH;
+        else if (viewWidth > 10_000) cellPx = 512;
+        else if (viewWidth > 2_000) cellPx = 128;
+        else cellPx = 32;
 
+        const cellM = cellPx * px;
+        const nRows = Math.ceil(H / cellPx);
+        const nCols = Math.ceil(W / cellPx);
+
+        const cjMin = Math.max(0, Math.floor((minE - originE) / cellM));
+        const cjMax = Math.min(nCols - 1, Math.floor((maxE - originE) / cellM));
+        const ciMin = Math.max(0, Math.floor((originN - maxN) / cellM));
+        const ciMax = Math.min(nRows - 1, Math.floor((originN - minN) / cellM));
+
+        // Which shard does each cell belong to?
         for (let ci = ciMin; ci <= ciMax; ci++) {
           for (let cj = cjMin; cj <= cjMax; cj++) {
             if (features.length >= MAX_FEATURES) { overflow = true; break; }
 
-            const corners = src.getChunkBoundsLngLat(ci, cj);
-            if (!corners) continue;
+            // Compute cell bounds in UTM, then project to WGS84
+            const cellE = originE + cj * cellM;
+            const cellN = originN - ci * cellM;
+            const cellE2 = Math.min(cellE + cellM, originE + W * px);
+            const cellN2 = Math.max(cellN - cellM, originN - H * px);
+
+            const tl = proj.inverse(cellE, cellN);
+            const tr = proj.inverse(cellE2, cellN);
+            const br = proj.inverse(cellE2, cellN2);
+            const bl = proj.inverse(cellE, cellN2);
+
+            // Shard index this cell belongs to
+            const si = Math.floor((ci * cellPx) / shardH);
+            const sj = Math.floor((cj * cellPx) / shardW);
 
             features.push({
               type: 'Feature',
-              properties: { zone: zone.id, ci, cj, years: JSON.stringify(meta.years ?? []) },
+              properties: {
+                zone: zone.id,
+                ci: si, cj: sj,  // shard index (for click handler)
+                cellCi: ci, cellCj: cj, cellPx,
+                years: JSON.stringify(meta.years ?? []),
+              },
               geometry: {
                 type: 'Polygon',
-                coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
+                coordinates: [[tl, tr, br, bl, tl]],
               },
             });
           }
