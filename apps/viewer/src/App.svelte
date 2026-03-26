@@ -216,13 +216,13 @@
         paint: { 'line-color': '#00e5ff', 'line-width': 2, 'line-opacity': 0.6 },
         layout: { visibility: 'none' },
       });
-      // Shard grid (thinner, brighter)
+      // Shard grid (yellow, thick, very visible)
       map.addLayer({
         id: 'explorer-shard-line',
         type: 'line',
         source: 'explorer-grid',
         filter: ['==', ['get', 'kind'], 'shard'],
-        paint: { 'line-color': '#00e5ff', 'line-width': 1, 'line-opacity': 0.8 },
+        paint: { 'line-color': '#ffab00', 'line-width': 2, 'line-opacity': 0.9 },
         layout: { visibility: 'none' },
       });
 
@@ -450,12 +450,13 @@
           } else {
             // Clicked a zone boundary — open it to show shard grid
             const zoneId = String(p.zone);
-            const dm = get(displayManager);
-            if (dm) {
-              dm.getDisplaySource(zoneId);  // opens source async
-              // Set hover to zone with ci/cj=0 to trigger grid rebuild
-              explorerHover.set({ zoneId, ci: 0, cj: 0, years: [], utmBounds: [0, 0, 0, 0] });
-            }
+            (async () => {
+              try {
+                await mgr.getSource(zoneId);
+                // Source is now open — set hover to trigger grid rebuild
+                explorerHover.set({ zoneId, ci: -1, cj: -1, years: [], utmBounds: [0, 0, 0, 0] });
+              } catch { /* zone failed to open */ }
+            })();
           }
         } else {
           explorerHover.set(null);
