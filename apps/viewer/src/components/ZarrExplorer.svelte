@@ -262,6 +262,17 @@
             <span class="text-gray-500">Lon/Lat SE</span>
             <span class="text-gray-400 tabular-nums">{se[0].toFixed(4)}°, {se[1].toFixed(4)}°</span>
           {/if}
+          {#if meta.years && meta.years.length > 0}
+            {@const latestT = meta.years.length - 1}
+            {@const baseUrl = meta.url}
+            <span class="text-gray-500">Shard URL</span>
+            <span class="text-gray-400 text-[8px] break-all">
+              <a href="{baseUrl}/embeddings/c/{latestT}/{selected.ci}/{selected.cj}"
+                 target="_blank" class="text-term-cyan/60 hover:text-term-cyan underline">
+                embeddings/c/{latestT}/{selected.ci}/{selected.cj}
+              </a>
+            </span>
+          {/if}
         </div>
       {/if}
       {#if probeResults.size > 0}

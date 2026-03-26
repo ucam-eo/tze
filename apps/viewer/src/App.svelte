@@ -229,9 +229,10 @@
         id: 'explorer-selected-fill',
         type: 'fill',
         source: 'explorer-selected',
+        filter: ['==', ['get', 'kind'], 'shard'],
         paint: {
           'fill-color': '#00e5ff',
-          'fill-opacity': 0.18,
+          'fill-opacity': 0.12,
         },
         layout: { visibility: 'none' },
       });
@@ -239,10 +240,24 @@
         id: 'explorer-selected-line',
         type: 'line',
         source: 'explorer-selected',
+        filter: ['==', ['get', 'kind'], 'shard'],
         paint: {
           'line-color': '#00e5ff',
           'line-width': 2,
           'line-opacity': 0.9,
+        },
+        layout: { visibility: 'none' },
+      });
+      map.addLayer({
+        id: 'explorer-tile-grid-line',
+        type: 'line',
+        source: 'explorer-selected',
+        filter: ['==', ['get', 'kind'], 'tile_grid'],
+        paint: {
+          'line-color': '#ff9800',
+          'line-width': 1,
+          'line-opacity': 0.5,
+          'line-dasharray': [4, 4],
         },
         layout: { visibility: 'none' },
       });
@@ -652,6 +667,7 @@
     if (map.getLayer('explorer-grid-line')) map.setLayoutProperty('explorer-grid-line', 'visibility', vis);
     if (map.getLayer('explorer-selected-fill')) map.setLayoutProperty('explorer-selected-fill', 'visibility', vis);
     if (map.getLayer('explorer-selected-line')) map.setLayoutProperty('explorer-selected-line', 'visibility', vis);
+    if (map.getLayer('explorer-tile-grid-line')) map.setLayoutProperty('explorer-tile-grid-line', 'visibility', vis);
   });
 
   // Sync selected explorer shard highlight
@@ -666,17 +682,40 @@
       if (mgr) {
         const corners = mgr.getChunkBoundsLngLat(hover.zoneId, hover.ci, hover.cj);
         if (corners) {
-          src.setData({
-            type: 'FeatureCollection',
-            features: [{
-              type: 'Feature',
-              properties: {},
-              geometry: {
-                type: 'Polygon',
-                coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
-              },
-            }],
-          });
+          const features: GeoJSON.Feature[] = [{
+            type: 'Feature',
+            properties: { kind: 'shard' },
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
+            },
+          }];
+
+          // Compute 0.1° tile grid rectangles within the shard.
+          // Each tile covers 0.1° × 0.1° in WGS84 with centres at n*0.1+0.05.
+          const lngs = corners.map(c => c[0]);
+          const lats = corners.map(c => c[1]);
+          const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+          const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+          const step = 0.1;
+          // Tile boundaries are at multiples of 0.1
+          const startLng = Math.floor(minLng / step) * step;
+          const startLat = Math.floor(minLat / step) * step;
+          for (let tLon = startLng; tLon < maxLng; tLon += step) {
+            for (let tLat = startLat; tLat < maxLat; tLat += step) {
+              const w = tLon, e = tLon + step, s = tLat, n = tLat + step;
+              features.push({
+                type: 'Feature',
+                properties: { kind: 'tile_grid' },
+                geometry: {
+                  type: 'Polygon',
+                  coordinates: [[[w,s],[e,s],[e,n],[w,n],[w,s]]],
+                },
+              });
+            }
+          }
+
+          src.setData({ type: 'FeatureCollection', features });
           return;
         }
       }
