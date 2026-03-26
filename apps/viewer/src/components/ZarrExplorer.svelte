@@ -125,7 +125,7 @@
             if (!corners) continue;
             features.push({
               type: 'Feature',
-              properties: { kind: 'shard', zone: zone.id, ci, cj, years: JSON.stringify(meta.years ?? []) },
+              properties: { zone: zone.id, ci, cj, years: JSON.stringify(meta.years ?? []) },
               geometry: {
                 type: 'Polygon',
                 coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]],
