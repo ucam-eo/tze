@@ -14,10 +14,10 @@ export const catalogUrl = writable('https://dl2.geotessera.org/zarr/v2/store.zar
 export const catalogStatus = writable<'idle' | 'loading' | 'loaded' | 'error'>('idle');
 export const catalogError = writable<string>('');
 
-/** All zones across all years, as returned by loadCatalog */
+/** All zones discovered in the store */
 export const allZones = writable<ZoneDescriptor[]>([]);
 
-/** Years discovered in the catalog, sorted ascending */
+/** Years discovered in the store, sorted ascending */
 export const availableYears = writable<string[]>([]);
 
 /** Currently active year */
@@ -26,15 +26,10 @@ export const activeYear = writable<string>('');
 /** Per-year global preview URLs */
 export const globalPreviewUrls = writable<Record<string, string>>({});
 
-/** Whether we're using a v2 store (single store, time dimension). */
-export const isV2Store = writable(false);
-
-/** Zones filtered to the active year (v1) or all zones (v2). */
+/** All zones (zarr stores always contain all zones). */
 export const zones = derived(
-  [allZones, activeYear, isV2Store],
-  ([$allZones, $activeYear, $isV2]) =>
-    $isV2 ? $allZones :
-    $activeYear ? $allZones.filter(z => z.id.endsWith(`_${$activeYear}`)) : $allZones
+  [allZones],
+  ([$allZones]) => $allZones
 );
 
 /** Initialize the multi-zone source manager. */

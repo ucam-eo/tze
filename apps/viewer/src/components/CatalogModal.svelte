@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadCatalog, loadV2Store, pointInBbox } from '../lib/stac';
+  import { loadStore, pointInBbox } from '../lib/stac';
   import {
     catalogUrl, zones, allZones, availableYears, activeYear,
     globalPreviewUrls as globalPreviewUrlsStore,
-    catalogStatus, catalogError, initManager, isV2Store,
+    catalogStatus, catalogError, initManager,
   } from '../stores/stac';
   import { mapInstance } from '../stores/map';
   import { status, globalPreviewUrl, globalPreviewBounds } from '../stores/zarr';
@@ -59,9 +59,7 @@
     $status = 'Loading catalog...';
 
     try {
-      const isV2 = /\.zarr\/?$/.test(url);
-      $isV2Store = isV2;
-      const result = isV2 ? await loadV2Store(url) : await loadCatalog(url);
+      const result = await loadStore(url);
       $allZones = result.zones;
       $availableYears = result.availableYears;
       $globalPreviewUrlsStore = result.globalPreviewUrls;
@@ -104,7 +102,7 @@
           <div class="w-2 h-2 rounded-full bg-term-cyan shadow-[0_0_6px_rgba(0,229,255,0.6)]"></div>
           <h2 class="text-term-cyan text-sm font-bold tracking-[0.2em] uppercase">Connect Catalog</h2>
         </div>
-        <p class="text-gray-600 text-[10px] mt-0.5 tracking-wider">STAC catalog URL</p>
+        <p class="text-gray-600 text-[10px] mt-0.5 tracking-wider">Zarr store URL</p>
       </div>
 
       <!-- Body -->
@@ -146,7 +144,7 @@
               {/if}
             </span>
           {:else}
-            <span class="text-gray-600">Enter a STAC catalog URL to connect</span>
+            <span class="text-gray-600">Enter a zarr store URL to connect</span>
           {/if}
         </div>
       </div>
