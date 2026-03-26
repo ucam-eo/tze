@@ -204,7 +204,7 @@
         id: 'explorer-grid-fill',
         type: 'fill',
         source: 'explorer-grid',
-        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.06 },
+        paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.1 },
         layout: { visibility: 'none' },
       });
       // Zone boundaries (wide, dimmer)

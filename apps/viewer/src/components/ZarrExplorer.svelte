@@ -79,16 +79,12 @@
       if (zE < vW || zW > vE || zN < vS || zS > vN) continue;
       if (features.length >= MAX_FEATURES) { overflow = true; break; }
 
-      // Clip bbox to viewport for display
-      const w = Math.max(zW, vW), e = Math.min(zE, vE);
-      const s = Math.max(zS, vS), n = Math.min(zN, vN);
-
       features.push({
         type: 'Feature',
         properties: { zone: zone.id, utmZone: zone.utmZone, kind: 'zone' },
         geometry: {
           type: 'Polygon',
-          coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]],
+          coordinates: [[[zW, zS], [zE, zS], [zE, zN], [zW, zN], [zW, zS]]],
         },
       });
     }
