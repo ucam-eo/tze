@@ -92,7 +92,10 @@
     // Also add shard grid for any zone that has been opened + selected
     const mgr = get(sourceManager);
     const hover = hoverOverride !== undefined ? hoverOverride : get(explorerHover);
-    if (mgr && hover) {
+    // Show shard grid when a zone has been clicked and source is open
+    // Only if zoomed in enough (viewport < 5° wide ≈ 500km)
+    const viewWidthDeg = vE - vW;
+    if (mgr && hover && viewWidthDeg < 5) {
       const src = mgr.getOpenSource(hover.zoneId);
       if (src) {
         const meta = src.metadata;

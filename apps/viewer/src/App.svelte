@@ -199,12 +199,22 @@
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
       });
-      // Invisible fill for click detection
+      // Zone fill for click detection (zones only, not shards)
       map.addLayer({
         id: 'explorer-grid-fill',
         type: 'fill',
         source: 'explorer-grid',
+        filter: ['==', ['get', 'kind'], 'zone'],
         paint: { 'fill-color': '#00e5ff', 'fill-opacity': 0.1 },
+        layout: { visibility: 'none' },
+      });
+      // Shard fill for click detection
+      map.addLayer({
+        id: 'explorer-shard-fill',
+        type: 'fill',
+        source: 'explorer-grid',
+        filter: ['==', ['get', 'kind'], 'shard'],
+        paint: { 'fill-color': '#ffab00', 'fill-opacity': 0.05 },
         layout: { visibility: 'none' },
       });
       // Zone boundaries (wide, dimmer)
@@ -432,7 +442,7 @@
       if (!mgr) return;
 
       if (tool === 'explorer') {
-        const features = map.queryRenderedFeatures(e.point, { layers: ['explorer-grid-fill'] });
+        const features = map.queryRenderedFeatures(e.point, { layers: ['explorer-shard-fill', 'explorer-grid-fill'] });
         if (features.length > 0) {
           const p = features[0].properties!;
           const kind = String(p.kind ?? 'zone');
@@ -643,7 +653,7 @@
     const visible = $explorerVisible;
     if (!map) return;
     const vis = visible ? 'visible' : 'none';
-    for (const lid of ['explorer-grid-fill', 'explorer-zone-line', 'explorer-shard-line']) {
+    for (const lid of ['explorer-grid-fill', 'explorer-shard-fill', 'explorer-zone-line', 'explorer-shard-line']) {
       if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis);
     }
   });
