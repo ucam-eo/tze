@@ -18,6 +18,13 @@
   let currentScores: Float32Array | null = null;
   let currentRefIndex = -1;
 
+  // Cached sample embeddings from last UMAP run — used to recolor on new ref pixel
+  // without recomputing the UMAP projection.
+  let cachedSampleEmb: Float32Array | null = null;
+  let cachedSampleNBands = 0;
+  let cachedSampleCount = 0;
+  let lastUmapTileCount = 0;
+
   /** Loading state: idle → sampling → computing → ready */
   let umapState = $state<'idle' | 'sampling' | 'computing' | 'ready'>('idle');
   let sampledCount = $state(0);
@@ -186,6 +193,11 @@
     computeElapsed = 0;
     status = `UMAP ${sample.count} pts...`;
 
+    // Cache sample embeddings for recoloring on subsequent clicks
+    cachedSampleEmb = new Float32Array(sample.embeddings);
+    cachedSampleNBands = sample.nBands;
+    cachedSampleCount = sample.count;
+
     // Tick timer for elapsed display
     computeTimerId = setInterval(() => {
       computeElapsed = Math.round((performance.now() - computeStartTime) / 100) / 10;
@@ -227,9 +239,48 @@
     };
   }
 
-  // Trigger UMAP when data changes — debounced to avoid double-fire.
-  // Only tracks simScores, tileCount, and roiLoading — NOT simSelectedPixel
-  // or simRefEmbedding (those are read non-reactively inside runUmap via get()).
+  /** Recolor existing UMAP points against a new reference embedding.
+   *  Computes cosine similarity of new ref vs all cached sample embeddings. */
+  function recolorUmap() {
+    if (!cachedSampleEmb || !renderer) return;
+    const ref = get(simRefEmbedding);
+    if (!ref) return;
+
+    const n = cachedSampleCount;
+    const nB = cachedSampleNBands;
+    const scores = new Float32Array(n);
+
+    // Precompute ref norm
+    let refNormSq = 0;
+    for (let b = 0; b < nB; b++) refNormSq += ref[b] * ref[b];
+    const refNorm = Math.sqrt(refNormSq) || 1;
+
+    // Find which sample point is the new ref pixel (closest by cosine)
+    let bestRefIdx = -1;
+    let bestCos = -2;
+
+    for (let i = 0; i < n; i++) {
+      const off = i * nB;
+      let dot = 0, normSq = 0;
+      for (let b = 0; b < nB; b++) {
+        dot += cachedSampleEmb[off + b] * ref[b];
+        normSq += cachedSampleEmb[off + b] * cachedSampleEmb[off + b];
+      }
+      const cos = dot / (Math.sqrt(normSq) * refNorm || 1);
+      scores[i] = Math.max(0, Math.min(1, (cos + 1) / 2)); // map [-1,1] to [0,1]
+      if (cos > bestCos) { bestCos = cos; bestRefIdx = i; }
+    }
+
+    currentScores = scores;
+    currentRefIndex = bestRefIdx;
+    const colors = buildColors(scores, bestRefIdx, get(simThreshold));
+    renderer.updateColors(colors);
+    renderer.setRefIndex(bestRefIdx);
+    status = `${n} points`;
+  }
+
+  // Trigger UMAP when tile count changes or initial load.
+  // On subsequent reference pixel changes (simScores), just recolor.
   let umapTimer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
     const _s = $simScores;
@@ -237,7 +288,16 @@
     const loading = $roiLoading;
     clearTimeout(umapTimer);
     if (_t > 0 && !loading) {
-      umapTimer = setTimeout(runUmap, 60);
+      // Only rerun full UMAP if tile count changed (new data loaded)
+      if (_t !== lastUmapTileCount) {
+        lastUmapTileCount = _t;
+        umapTimer = setTimeout(runUmap, 60);
+      } else if (cachedSampleEmb && renderer) {
+        // Same tiles, new reference pixel — just recolor
+        recolorUmap();
+      } else {
+        umapTimer = setTimeout(runUmap, 60);
+      }
     }
   });
 

@@ -8,7 +8,7 @@ export { UtmProjection } from './projection.js';
 export { TesseraTileRenderer } from './tile-renderer.js';
 
 // @internal — used by map plugins, not intended for public consumption
-export { openStore, fetchRegion } from './zarr-reader.js';
+export { openStore, fetchRegion, parseModelName } from './zarr-reader.js';
 export type { ZarrStore } from './zarr-reader.js';
 
 export type { LoadChunksOptions } from './tessera-source.js';

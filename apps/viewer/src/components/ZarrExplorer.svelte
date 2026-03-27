@@ -1,6 +1,6 @@
 <script lang="ts">
   import { sourceManager } from '../stores/zarr';
-  import { explorerHover, explorerTileEmb, YEAR_COLORS } from '../stores/zarr-explorer';
+  import { explorerHover, explorerTileEmb, explorerPixel, YEAR_COLORS } from '../stores/zarr-explorer';
   import { get } from 'svelte/store';
 
   // Year probe state
@@ -275,6 +275,10 @@
     }
     probeResults = results;
     probing = false;
+    // Auto-fetch temporal comparison once probing is done
+    if ([...results.values()].filter(s => s === 'found').length > 1) {
+      fetchTemporalData();
+    }
   }
 
   // Auto-probe after a brief pause when selection changes; cancel on new click
@@ -314,6 +318,7 @@
       return u.hostname + (parts.length > 0 ? '/.../' + parts[parts.length - 1] : '');
     } catch { return url; }
   }
+
 </script>
 
 <div class="space-y-3" data-tutorial="explorer-panel">
@@ -333,6 +338,12 @@
         {selected.zoneId}
         <span class="text-gray-500 font-normal">shard [{selected.ci}, {selected.cj}]</span>
       </div>
+      {#if $explorerPixel}
+        <div class="text-[9px] text-term-cyan/70 tabular-nums">
+          {$explorerPixel.lng.toFixed(6)}, {$explorerPixel.lat.toFixed(6)}
+          <span class="text-gray-600 ml-1">px [{$explorerPixel.row}, {$explorerPixel.col}]</span>
+        </div>
+      {/if}
       {#if meta}
         {@const px = meta.transform[0]}
         {@const originE = meta.transform[2]}
@@ -344,10 +355,8 @@
         <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
           <span class="text-gray-500">CRS</span>
           <span class="text-gray-400">EPSG:{meta.epsg}</span>
-          <span class="text-gray-500">Pixel size</span>
-          <span class="text-gray-400">{px}m</span>
-          <span class="text-gray-500">Bands</span>
-          <span class="text-gray-400">{meta.nBands}</span>
+          <span class="text-gray-500">Pixel</span>
+          <span class="text-gray-400">{px}m, {meta.nBands} bands</span>
           <span class="text-gray-500">Shard</span>
           <span class="text-gray-400">{meta.chunkShape[1]}x{meta.chunkShape[0]} px ({(chunkW/1000).toFixed(1)}x{(chunkH/1000).toFixed(1)} km)</span>
           <span class="text-gray-500">UTM NW</span>
@@ -375,31 +384,18 @@
           {/if}
         </div>
 
-        <!-- Provenance (geoemb: convention) -->
-        {#if meta.geoemb_model || meta.geoemb_sourceData}
-          <div class="border-t border-gray-800/40 pt-1.5 space-y-1">
-            <div class="text-[9px] text-gray-500 uppercase tracking-wider">Provenance</div>
-            <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[9px]">
+        <!-- Provenance (geoemb: convention) — compact -->
+        {#if meta.geoemb_model || meta.geoemb_dataType}
+          <div class="border-t border-gray-800/40 pt-1.5">
+            <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
               {#if meta.geoemb_model}
                 <span class="text-gray-500">Model</span>
                 <a href={meta.geoemb_model} target="_blank"
-                   class="text-term-cyan/60 hover:text-term-cyan truncate">{shortUrl(meta.geoemb_model)}</a>
-              {/if}
-              {#if meta.geoemb_type}
-                <span class="text-gray-500">Type</span>
-                <span class="text-gray-400">{meta.geoemb_type}</span>
+                   class="text-term-cyan/60 hover:text-term-cyan">{meta.geoemb_modelName ?? meta.geoemb_model}</a>
               {/if}
               {#if meta.geoemb_dataType}
-                <span class="text-gray-500">Data type</span>
-                <span class="text-gray-400">{meta.geoemb_dataType}{meta.geoemb_quantMethod ? ` (${meta.geoemb_quantMethod})` : ''}</span>
-              {/if}
-              {#if meta.geoemb_gsd}
-                <span class="text-gray-500">GSD</span>
-                <span class="text-gray-400">{meta.geoemb_gsd}m</span>
-              {/if}
-              {#if meta.geoemb_spatialLayout}
-                <span class="text-gray-500">Layout</span>
-                <span class="text-gray-400">{meta.geoemb_spatialLayout}</span>
+                <span class="text-gray-500">Type</span>
+                <span class="text-gray-400">{meta.geoemb_dataType}{meta.geoemb_quantMethod ? ` / ${meta.geoemb_quantMethod}` : ''}</span>
               {/if}
               {#if meta.geoemb_buildVersion}
                 <span class="text-gray-500">Build</span>
@@ -407,14 +403,13 @@
               {/if}
               {#if meta.geoemb_sourceData}
                 <span class="text-gray-500">Source</span>
-                <span class="text-gray-400 text-[8px]">
+                <span class="text-gray-400">
                   {#if Array.isArray(meta.geoemb_sourceData)}
                     {#each meta.geoemb_sourceData as url, i}
-                      {#if i > 0}<span class="text-gray-600">, </span>{/if}
-                      <a href={url} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">{shortUrl(url)}</a>
+                      <a href={url} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">[{i + 1}]</a>{' '}
                     {/each}
                   {:else}
-                    <a href={meta.geoemb_sourceData} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">{shortUrl(meta.geoemb_sourceData)}</a>
+                    <a href={meta.geoemb_sourceData} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">[1]</a>
                   {/if}
                 </span>
               {/if}
@@ -470,30 +465,25 @@
         <div class="text-[9px] text-gray-500">Loading zone metadata...</div>
       {/if}
 
-      <!-- Year verification (auto-probes after 300ms) -->
+      <!-- Year availability bar -->
       {#if probeResults.size > 0}
-        <div class="text-[9px] text-gray-500 uppercase tracking-wider">Years</div>
-        <div class="flex flex-wrap gap-1">
-          {#each [...probeResults.entries()] as [year, status]}
-            {@const color = YEAR_COLORS[year] ?? '#888'}
-            <span class="text-[9px] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
-                  style="background: {status === 'found' ? color + '22' : 'transparent'};
-                         color: {status === 'found' ? color : status === 'pending' ? '#666' : '#444'};
-                         {status === 'missing' ? 'text-decoration: line-through;' : ''}
-                         border: 1px solid {status === 'found' ? color + '44' : status === 'pending' ? '#333' : '#222'}">
-              {#if status === 'pending'}
-                <span class="inline-block w-1.5 h-1.5 border border-gray-500 border-t-gray-300 rounded-full animate-spin"></span>
-              {/if}
-              {year}
-            </span>
-          {/each}
+        {@const sorted = [...probeResults.entries()].sort((a, b) => a[0] - b[0])}
+        {@const found = sorted.filter(([,s]) => s === 'found').length}
+        {@const pending = sorted.some(([,s]) => s === 'pending')}
+        <div class="flex items-center gap-1.5 text-[9px]">
+          <span class="text-gray-500 shrink-0">Years</span>
+          <div class="flex flex-1 h-3.5 rounded overflow-hidden border border-gray-700/40">
+            {#each sorted as [year, status]}
+              {@const color = YEAR_COLORS[year] ?? '#888'}
+              <div class="flex-1 flex items-center justify-center text-[7px] font-mono leading-none"
+                   style="background: {status === 'found' ? color + '44' : 'transparent'};
+                          color: {status === 'found' ? color : '#444'}"
+                   title="{year}: {status}"
+              >{String(year).slice(2)}</div>
+            {/each}
+          </div>
+          <span class="text-gray-600 shrink-0 tabular-nums">{pending ? '...' : `${found}/${sorted.length}`}</span>
         </div>
-        {@const found = [...probeResults.values()].filter(s => s === 'found').length}
-        {@const total = probeResults.size}
-        {@const pending = [...probeResults.values()].filter(s => s === 'pending').length}
-        {#if pending === 0}
-          <div class="text-[9px] text-gray-500">{found}/{total} years have data</div>
-        {/if}
       {:else if selected && selected.ci >= 0}
         <div class="text-[9px] text-gray-600 italic">Checking years...</div>
       {/if}

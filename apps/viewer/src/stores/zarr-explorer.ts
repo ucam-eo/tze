@@ -19,6 +19,12 @@ export const explorerHover = writable<{
   utmBounds: [number, number, number, number];
 } | null>(null);
 
+/** Current pixel under the cursor in explorer mode. */
+export const explorerPixel = writable<{
+  lng: number; lat: number;
+  ci: number; cj: number; row: number; col: number;
+} | null>(null);
+
 /** Year → colour mapping */
 export const YEAR_COLORS: Record<number, string> = {
   2017: '#e6194b',

@@ -68,6 +68,10 @@ export interface StoreMetadata {
   /** Encoder model URL from `geoemb:model`. */
   geoemb_model?: string;
 
+  /** Human-readable model name + version parsed from `geoemb:model` URL
+   *  (e.g. "TESSERA 1.0"). */
+  geoemb_modelName?: string;
+
   /** Source dataset URL(s) from `geoemb:source_data`. */
   geoemb_sourceData?: string | string[];
 

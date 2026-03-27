@@ -2,6 +2,31 @@ import * as zarr from 'zarrita';
 import type { StoreMetadata } from './types.js';
 
 /**
+ * Parse a geoemb:model URL into a human-readable name + version.
+ * e.g. "https://geotessera.org/model/1.0" → "TESSERA 1.0"
+ *      "https://huggingface.co/made-with-clay/Clay" → "CLAY"
+ */
+export function parseModelName(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    const parts = u.pathname.split('/').filter(Boolean);
+    let name: string;
+    if (host.includes('geotessera')) {
+      name = 'TESSERA';
+    } else if (host.includes('huggingface')) {
+      name = (parts[1] ?? parts[0] ?? host.split('.')[0]).toUpperCase();
+    } else {
+      name = host.split('.')[0].toUpperCase();
+    }
+    // Last path segment as version if it looks like a version (digits/dots)
+    const last = parts[parts.length - 1] ?? '';
+    const isVersion = /^[\d.]+$/.test(last);
+    return isVersion ? `${name} ${last}` : name;
+  } catch { return url; }
+}
+
+/**
  * Opened Zarr v3 store with discovered arrays and metadata.
  *
  * @remarks
@@ -53,11 +78,24 @@ export async function openStore(url: string): Promise<ZarrStore> {
   const embArr = await zarr.open(rootLoc.resolve('embeddings'), { kind: 'array' });
   const scalesArr = await zarr.open(rootLoc.resolve('scales'), { kind: 'array' });
 
-  // --- Validate geoemb: convention (required fields) ---
-  const geoemType = attrs['geoemb:type'] as string | undefined;
-  const geoemDimensions = attrs['geoemb:dimensions'] as number | undefined;
-  const geoemModel = attrs['geoemb:model'] as string | undefined;
-  const geoemDataType = attrs['geoemb:data_type'] as string | undefined;
+  // --- Read geoemb: convention fields from parent root group ---
+  // geoemb attributes live on the root store (e.g. store.zarr), not the
+  // per-zone subgroup (e.g. store.zarr/utm30).
+  let geoemAttrs: Record<string, unknown> = {};
+  const parentUrl = url.replace(/\/[^/]+\/?$/, '');
+  if (parentUrl !== url) {
+    try {
+      const parentFetch = new zarr.FetchStore(parentUrl);
+      const parentStore = new zarr.CoalescingStore(parentFetch);
+      const parentGroup = await zarr.open(zarr.root(parentStore), { kind: 'group' });
+      geoemAttrs = parentGroup.attrs as Record<string, unknown>;
+    } catch { /* parent not readable */ }
+  }
+
+  const geoemType = geoemAttrs['geoemb:type'] as string | undefined;
+  const geoemDimensions = geoemAttrs['geoemb:dimensions'] as number | undefined;
+  const geoemModel = geoemAttrs['geoemb:model'] as string | undefined;
+  const geoemDataType = geoemAttrs['geoemb:data_type'] as string | undefined;
 
   if (!geoemType || !geoemDimensions || !geoemModel || !geoemDataType) {
     const missing = [
@@ -83,7 +121,7 @@ export async function openStore(url: string): Promise<ZarrStore> {
   }
 
   // --- Validate geoemb:quantization if present ---
-  const quantization = attrs['geoemb:quantization'] as
+  const quantization = geoemAttrs['geoemb:quantization'] as
     { method?: string; original_dtype?: string; scale_array?: string } | undefined;
   if (quantization) {
     if (quantization.method !== 'per_pixel_scale') {
@@ -95,15 +133,16 @@ export async function openStore(url: string): Promise<ZarrStore> {
   }
 
   // --- Read optional geoemb: convention fields for provenance ---
-  const geoemGsd = attrs['geoemb:gsd'] as number | undefined;
-  const geoemSpatialLayout = attrs['geoemb:spatial_layout'] as string | undefined;
-  const geoemBuildVersion = attrs['geoemb:build_version'] as string | undefined;
-  const geoemSourceData = attrs['geoemb:source_data'] as string | string[] | undefined;
+  const geoemGsd = geoemAttrs['geoemb:gsd'] as number | undefined;
+  const geoemSpatialLayout = geoemAttrs['geoemb:spatial_layout'] as string | undefined;
+  const geoemBuildVersion = geoemAttrs['geoemb:build_version'] as string | undefined;
+  const geoemSourceData = geoemAttrs['geoemb:source_data'] as string | string[] | undefined;
 
   // Shared provenance fields injected into StoreMetadata
   const provenance = {
     geoemb_type: geoemType,
     geoemb_model: geoemModel,
+    geoemb_modelName: geoemModel ? parseModelName(geoemModel) : undefined,
     geoemb_sourceData: geoemSourceData,
     geoemb_dataType: geoemDataType,
     geoemb_gsd: geoemGsd,

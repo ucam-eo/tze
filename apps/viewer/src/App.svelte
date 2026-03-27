@@ -21,7 +21,7 @@
   import { zones } from './stores/stac';
   import { pointInBbox } from './lib/stac';
   import { segmentPolygons, segmentVisible } from './stores/segmentation';
-  import { explorerHover, explorerTileEmb } from './stores/zarr-explorer';
+  import { explorerHover, explorerTileEmb, explorerPixel } from './stores/zarr-explorer';
   import UmapCloud from './components/UmapCloud.svelte';
   import TutorialOverlay from './components/TutorialOverlay.svelte';
   import { simEmbeddingTileCount, simSelectedPixel } from './stores/similarity';
@@ -656,6 +656,7 @@
                 if (!isNaN(tile.emb[off])) {
                   const embedding = tile.emb.slice(off, off + tile.nBands);
                   renderFingerprintTooltip(fpEl, embedding, e.originalEvent.clientX, e.originalEvent.clientY);
+                  explorerPixel.set({ lng: e.lngLat.lng, lat: e.lngLat.lat, ci, cj, row, col });
                   shown = true;
                   // Pixel highlight box
                   const pxKey = `${ci}:${cj}:${row}:${col}`;
@@ -697,6 +698,7 @@
         if (!shown) {
           stopFingerprint();
           fpEl.style.display = 'none';
+          explorerPixel.set(null);
           if (hoveredPixelKey && pixSrc) {
             hoveredPixelKey = '';
             pixSrc.setData({ type: 'FeatureCollection', features: [] });

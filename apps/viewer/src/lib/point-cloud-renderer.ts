@@ -214,6 +214,10 @@ export class PointCloudRenderer {
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, colors);
   }
 
+  setRefIndex(idx: number) {
+    this.refIndex = idx;
+  }
+
   start() {
     cancelAnimationFrame(this.animId);
     this.lastTime = performance.now();
