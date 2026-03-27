@@ -9,6 +9,9 @@ export const explorerTileEmb = writable<{
   nBands: number;
   tileW: number;
   tileH: number;
+  /** Pre-computed tile mean embedding (for per-pixel deviance). */
+  tileMean: Float32Array;
+  tileMeanNorm: number;
 } | null>(null);
 
 export const explorerHover = writable<{
@@ -19,10 +22,13 @@ export const explorerHover = writable<{
   utmBounds: [number, number, number, number];
 } | null>(null);
 
-/** Current pixel under the cursor in explorer mode. */
+/** Current pixel under the cursor in explorer mode, with per-pixel stats. */
 export const explorerPixel = writable<{
   lng: number; lat: number;
   ci: number; cj: number; row: number; col: number;
+  norm: number;
+  cosineVsTile: number;   // cosine similarity of this pixel vs tile mean embedding
+  embedding: Float32Array; // the raw 128-d vector
 } | null>(null);
 
 /** Year → colour mapping */

@@ -656,7 +656,17 @@
                 if (!isNaN(tile.emb[off])) {
                   const embedding = tile.emb.slice(off, off + tile.nBands);
                   renderFingerprintTooltip(fpEl, embedding, e.originalEvent.clientX, e.originalEvent.clientY);
-                  explorerPixel.set({ lng: e.lngLat.lng, lat: e.lngLat.lat, ci, cj, row, col });
+                  // Compute per-pixel stats
+                  let pxNormSq = 0, dot = 0;
+                  for (let b = 0; b < tile.nBands; b++) {
+                    pxNormSq += embedding[b] * embedding[b];
+                    dot += embedding[b] * tile.tileMean[b];
+                  }
+                  const pxNorm = Math.sqrt(pxNormSq);
+                  const cosVsTile = (tile.tileMeanNorm > 0 && pxNorm > 0)
+                    ? dot / (pxNorm * tile.tileMeanNorm) : 0;
+                  explorerPixel.set({ lng: e.lngLat.lng, lat: e.lngLat.lat, ci, cj, row, col,
+                    norm: pxNorm, cosineVsTile: cosVsTile, embedding });
                   shown = true;
                   // Pixel highlight box
                   const pxKey = `${ci}:${cj}:${row}:${col}`;

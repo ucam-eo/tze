@@ -17,15 +17,31 @@ function abortError(): DOMException {
   return new DOMException('Tile request aborted', 'AbortError');
 }
 
-/** Race a promise against an AbortSignal. Rejects immediately if already aborted. */
-function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(abortError());
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => {
-      signal.addEventListener('abort', () => reject(abortError()), { once: true });
-    }),
-  ]);
+/**
+ * A FetchStore wrapper that injects a mutable AbortSignal into every HTTP
+ * request. The signal can be swapped per tile request so that when MapLibre
+ * cancels a tile, the underlying `fetch()` is also aborted — freeing the
+ * browser connection slot immediately (critical for Safari's strict limits).
+ */
+class AbortableFetchStore {
+  private inner: zarr.FetchStore;
+  signal: AbortSignal | null = null;
+
+  constructor(url: string | URL) {
+    this.inner = new zarr.FetchStore(url);
+  }
+
+  get url() { return this.inner.url; }
+
+  async get(key: string, opts: RequestInit & { onBytes?: (n: number) => void } = {}): Promise<Uint8Array | undefined> {
+    if (this.signal) opts = { ...opts, signal: this.signal };
+    return (this.inner as unknown as { get(k: string, o?: unknown): Promise<Uint8Array | undefined> }).get(key, opts);
+  }
+
+  async getRange(key: string, range: unknown, opts: RequestInit & { onBytes?: (n: number) => void } = {}): Promise<Uint8Array | undefined> {
+    if (this.signal) opts = { ...opts, signal: this.signal };
+    return (this.inner as unknown as { getRange(k: string, r: unknown, o?: unknown): Promise<Uint8Array | undefined> }).getRange(key, range, opts);
+  }
 }
 
 interface PyramidLevel {
@@ -33,17 +49,21 @@ interface PyramidLevel {
   shape: [number, number, number]; // [lat, lon, band]
 }
 
-// Cache: storeUrl/variable → opened pyramid levels
-const pyramidCache = new Map<string, Promise<PyramidLevel[]>>();
+interface CachedPyramid {
+  levels: PyramidLevel[];
+  store: AbortableFetchStore;
+}
 
-async function openPyramid(storeUrl: string, variable: string): Promise<PyramidLevel[]> {
-  const fetchStore = new zarr.FetchStore(storeUrl);
-  const store = new zarr.CoalescingStore(fetchStore);
-  const rootLoc = zarr.root(store);
+// Cache: storeUrl/variable → opened pyramid (with abortable store)
+const pyramidCache = new Map<string, Promise<CachedPyramid>>();
+
+async function openPyramid(storeUrl: string, variable: string): Promise<CachedPyramid> {
+  const fetchStore = new AbortableFetchStore(storeUrl);
+  const coalStore = new zarr.CoalescingStore(fetchStore as unknown as zarr.FetchStore);
+  const rootLoc = zarr.root(coalStore);
   const group = await zarr.open(rootLoc, { kind: 'group' });
   const attrs = group.attrs as Record<string, unknown>;
 
-  // Read multiscales metadata to discover pyramid levels
   const ms = attrs.multiscales as { layout: { asset: string }[] } | undefined;
   if (!ms?.layout) {
     throw new Error('No multiscales metadata in store');
@@ -53,15 +73,12 @@ async function openPyramid(storeUrl: string, variable: string): Promise<PyramidL
   for (const entry of ms.layout) {
     const path = `${entry.asset}/${variable}`;
     const arr = await zarr.open(rootLoc.resolve(path), { kind: 'array' });
-    levels.push({
-      arr,
-      shape: arr.shape as [number, number, number],
-    });
+    levels.push({ arr, shape: arr.shape as [number, number, number] });
   }
-  return levels;
+  return { levels, store: fetchStore };
 }
 
-function getOrOpenPyramid(storeUrl: string, variable: string): Promise<PyramidLevel[]> {
+function getOrOpenPyramid(storeUrl: string, variable: string): Promise<CachedPyramid> {
   const key = `${storeUrl}/${variable}`;
   let p = pyramidCache.get(key);
   if (!p) {
@@ -120,9 +137,13 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
     const variable = parts.pop()!; // e.g. "rgb" or "pca_rgb"
     const storeUrl = parts.join('/');
 
-    const levels = await getOrOpenPyramid(storeUrl, variable);
+    const pyramid = await getOrOpenPyramid(storeUrl, variable);
     if (signal.aborted) throw abortError();
-    const level = selectLevel(levels, z);
+
+    // Inject this tile's abort signal into the store so fetch() calls are cancellable
+    pyramid.store.signal = signal;
+
+    const level = selectLevel(pyramid.levels, z);
     const bounds = tileBounds(z, x, y);
 
     // Map lat/lon → pixel coordinates in this pyramid level (equirectangular)
@@ -146,12 +167,9 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
       return { data: new ArrayBuffer(0) };
     }
 
-    // Fetch the region from Zarr — race against abort signal so cancelled
-    // tiles don't block the browser's connection pool.
-    const result = await raceAbort(
-      zarr.get(level.arr, [zarr.slice(r0, r1), zarr.slice(c0, c1), null]),
-      signal,
-    );
+    // Fetch the region from Zarr — abort signal is injected into the store's
+    // fetch() calls, so cancelled tiles truly release the connection.
+    const result = await zarr.get(level.arr, [zarr.slice(r0, r1), zarr.slice(c0, c1), null]);
     if (signal.aborted) throw abortError();
 
     const rawData = result.data as Uint8Array;
@@ -209,7 +227,9 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
     for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
     return { data: bytes.buffer };
     } catch (err) {
+      // Silently re-throw abort errors (from our checks or from fetch() itself)
       if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      if (signal.aborted) throw abortError();
       console.error('[zarr-protocol] Tile load failed:', params.url, err);
       throw err;
     }

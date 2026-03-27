@@ -1,7 +1,177 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { sourceManager } from '../stores/zarr';
   import { explorerHover, explorerTileEmb, explorerPixel, YEAR_COLORS } from '../stores/zarr-explorer';
   import { get } from 'svelte/store';
+
+  // --- Animated fingerprint canvas ---
+  let fpCanvasEl = $state<HTMLCanvasElement>(undefined!);
+  let fpAnimId: number | null = null;
+  let fpDisplayTile: Float32Array | null = null;  // lerped tile mean values
+  let fpDisplayPx: Float32Array | null = null;    // lerped pixel values
+  let fpTargetTile: Float32Array | null = null;
+  let fpTargetPx: Float32Array | null = null;
+  let fpHasPixel = false;
+  let fpNBands = 0;
+  const FP_LERP = 0.12;
+
+  function updateFpTarget(tileMean: Float32Array, pixelEmb: Float32Array | null) {
+    const n = tileMean.length;
+    // Find shared max for normalization
+    let maxAbs = 0;
+    for (let i = 0; i < n; i++) {
+      const a = Math.abs(tileMean[i]);
+      if (a > maxAbs) maxAbs = a;
+    }
+    if (pixelEmb) {
+      for (let i = 0; i < n; i++) {
+        const a = Math.abs(pixelEmb[i]);
+        if (a > maxAbs) maxAbs = a;
+      }
+    }
+    if (maxAbs === 0) maxAbs = 1;
+
+    if (!fpTargetTile || fpTargetTile.length !== n) {
+      fpTargetTile = new Float32Array(n);
+      fpDisplayTile = new Float32Array(n);
+      fpTargetPx = new Float32Array(n);
+      fpDisplayPx = new Float32Array(n);
+      // Init display to target (no initial morph)
+      for (let i = 0; i < n; i++) {
+        fpDisplayTile[i] = fpTargetTile[i] = tileMean[i] / maxAbs;
+        fpDisplayPx[i] = fpTargetPx[i] = pixelEmb ? pixelEmb[i] / maxAbs : fpTargetTile[i];
+      }
+    } else {
+      for (let i = 0; i < n; i++) {
+        fpTargetTile![i] = tileMean[i] / maxAbs;
+        fpTargetPx![i] = pixelEmb ? pixelEmb[i] / maxAbs : fpTargetTile![i];
+      }
+    }
+    fpHasPixel = !!pixelEmb;
+    fpNBands = n;
+    if (fpAnimId == null) fpAnimId = requestAnimationFrame(fpAnimFrame);
+  }
+
+  function fpAnimFrame() {
+    fpAnimId = null;
+    if (!fpDisplayTile || !fpTargetTile || !fpDisplayPx || !fpTargetPx || !fpCanvasEl) return;
+
+    // Lerp
+    let maxDelta = 0;
+    for (let i = 0; i < fpNBands; i++) {
+      let d = fpTargetTile[i] - fpDisplayTile[i];
+      fpDisplayTile[i] += d * FP_LERP;
+      if (Math.abs(d) > maxDelta) maxDelta = Math.abs(d);
+      d = fpTargetPx[i] - fpDisplayPx[i];
+      fpDisplayPx[i] += d * FP_LERP;
+      if (Math.abs(d) > maxDelta) maxDelta = Math.abs(d);
+    }
+
+    fpRenderCanvas();
+
+    if (maxDelta > 0.001 || fpHasPixel) {
+      fpAnimId = requestAnimationFrame(fpAnimFrame);
+    }
+  }
+
+  function fpRenderCanvas() {
+    if (!fpCanvasEl || !fpDisplayTile || !fpDisplayPx) return;
+    const canvas = fpCanvasEl;
+    const W = canvas.width;
+    const H = canvas.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const n = fpNBands;
+    const t = performance.now() / 1000;
+    const barW = W / n;
+    const midY = H / 2;
+    const maxH = midY - 2;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // Background
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    ctx.fillRect(0, 0, W, H);
+
+    // Centre line
+    ctx.strokeStyle = 'rgba(100,100,100,0.15)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+
+    for (let i = 0; i < n; i++) {
+      const x = i * barW;
+      const hue = ((i / n) * 270 + 180) % 360;
+      const tileV = fpDisplayTile[i];
+      const pxV = fpDisplayPx[i];
+
+      // Tile mean: dim bar
+      const tileH = tileV * maxH;
+      ctx.fillStyle = `hsla(${hue}, 40%, 35%, ${fpHasPixel ? 0.35 : 0.8})`;
+      ctx.fillRect(x, tileH >= 0 ? midY - tileH : midY, barW, Math.abs(tileH));
+
+      if (fpHasPixel) {
+        // Pixel: bright bar
+        const pxH = pxV * maxH;
+        ctx.fillStyle = `hsla(${hue}, 70%, 60%, 0.85)`;
+        ctx.fillRect(x, pxH >= 0 ? midY - pxH : midY, barW, Math.abs(pxH));
+
+        // Difference glow (where pixel exceeds or falls below tile)
+        const diff = pxH - tileH;
+        if (Math.abs(diff) > 0.5) {
+          const top = diff > 0 ? midY - pxH : midY - tileH;
+          ctx.fillStyle = diff > 0 ? 'rgba(0,229,255,0.5)' : 'rgba(255,50,100,0.5)';
+          ctx.fillRect(x, top, barW, Math.abs(diff));
+        }
+      }
+    }
+
+    if (fpHasPixel) {
+      // Animated sinusoidal overlay — shows the "wave" of difference
+      ctx.globalCompositeOperation = 'screen';
+      ctx.lineWidth = 1;
+
+      // Primary wave (cyan, traces the difference contour)
+      ctx.strokeStyle = 'rgba(0,229,255,0.25)';
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const x = (i + 0.5) * barW;
+        const diff = (fpDisplayPx[i] - fpDisplayTile[i]) * maxH;
+        const wave = Math.sin(i * 0.3 + t * 3) * 2;
+        const y = midY - diff + wave;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // Secondary wave (magenta, offset phase)
+      ctx.strokeStyle = 'rgba(255,0,128,0.15)';
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const x = (i + 0.5) * barW;
+        const diff = (fpDisplayPx[i] - fpDisplayTile[i]) * maxH;
+        const wave = Math.sin(i * 0.5 - t * 2) * 3;
+        const y = midY - diff * 0.7 + wave;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  }
+
+  // React to pixel/tile changes
+  $effect(() => {
+    const ts = tileStats;
+    const px = $explorerPixel;
+    if (ts && ts.fingerprint.length > 0) {
+      updateFpTarget(ts.fingerprint, px?.embedding ?? null);
+    }
+  });
+
+  onMount(() => {
+    return () => {
+      if (fpAnimId != null) cancelAnimationFrame(fpAnimId);
+    };
+  });
 
   // Year probe state
   let probeResults = $state<Map<number, 'pending' | 'found' | 'missing'>>(new Map());
@@ -45,9 +215,12 @@
         const tilePixels = region.tileW * region.tileH;
         const base = tIdx * tilePixels * region.nBands;
         const tileEmb = region.emb.slice(base, base + tilePixels * region.nBands);
+        const mean = computeStatsFromBuffer(region.emb, tIdx, tilePixels, region.nBands);
+        let meanNorm = 0;
+        if (mean) { for (let b = 0; b < mean.length; b++) meanNorm += mean[b] * mean[b]; meanNorm = Math.sqrt(meanNorm); }
         $explorerTileEmb = { zoneId: hover.zoneId, ci: hover.ci, cj: hover.cj,
-          emb: tileEmb, nBands: region.nBands, tileW: region.tileW, tileH: region.tileH };
-        computeStatsFromBuffer(region.emb, tIdx, tilePixels, region.nBands);
+          emb: tileEmb, nBands: region.nBands, tileW: region.tileW, tileH: region.tileH,
+          tileMean: mean ?? new Float32Array(region.nBands), tileMeanNorm: meanNorm };
         return;
       }
     }
@@ -108,16 +281,20 @@
       }
 
       if (myGen === tileStatsGen) {
+        const mean = computeStatsFromBuffer(emb, 0, tilePixels, nBands);
+        let meanNorm = 0;
+        if (mean) { for (let b = 0; b < mean.length; b++) meanNorm += mean[b] * mean[b]; meanNorm = Math.sqrt(meanNorm); }
         $explorerTileEmb = { zoneId: hover.zoneId, ci: hover.ci, cj: hover.cj,
-          emb, nBands, tileW: cs[1], tileH: cs[0] };
-        computeStatsFromBuffer(emb, 0, tilePixels, nBands);
+          emb, nBands, tileW: cs[1], tileH: cs[0],
+          tileMean: mean ?? new Float32Array(nBands), tileMeanNorm: meanNorm };
       }
     } catch { /* fetch failed */ }
 
     if (myGen === tileStatsGen) tileStatsLoading = false;
   }
 
-  function computeStatsFromBuffer(emb: Float32Array, tileIdx: number, tilePixels: number, nBands: number) {
+  /** Compute tile stats and return the mean embedding (also stored in tileStats.fingerprint). */
+  function computeStatsFromBuffer(emb: Float32Array, tileIdx: number, tilePixels: number, nBands: number): Float32Array | null {
     const base = tileIdx * tilePixels * nBands;
     let validCount = 0, sumNorm = 0, minN = Infinity, maxN = -Infinity;
     const meanEmb = new Float32Array(nBands);
@@ -137,7 +314,7 @@
       if (norm < minN) minN = norm;
       if (norm > maxN) maxN = norm;
     }
-    if (validCount === 0) { tileStats = null; tileStatsLoading = false; return; }
+    if (validCount === 0) { tileStats = null; tileStatsLoading = false; return null; }
 
     for (let b = 0; b < nBands; b++) meanEmb[b] /= validCount;
 
@@ -159,6 +336,7 @@
       variance: varSum / validCount, fingerprint: meanEmb,
     };
     tileStatsLoading = false;
+    return meanEmb;
   }
 
   async function fetchTemporalData() {
@@ -339,9 +517,23 @@
         <span class="text-gray-500 font-normal">shard [{selected.ci}, {selected.cj}]</span>
       </div>
       {#if $explorerPixel}
+        {@const px = $explorerPixel}
+        {@const cos = px.cosineVsTile}
+        {@const cosHue = cos > 0.95 ? 120 : cos > 0.8 ? 60 : 0}
         <div class="text-[9px] text-term-cyan/70 tabular-nums">
-          {$explorerPixel.lng.toFixed(6)}, {$explorerPixel.lat.toFixed(6)}
-          <span class="text-gray-600 ml-1">px [{$explorerPixel.row}, {$explorerPixel.col}]</span>
+          {px.lng.toFixed(6)}, {px.lat.toFixed(6)}
+          <span class="text-gray-600 ml-1">px [{px.row}, {px.col}]</span>
+        </div>
+        <div class="flex items-center gap-2 text-[9px]">
+          <span class="text-gray-500">norm</span>
+          <span class="text-gray-400 tabular-nums">{px.norm.toFixed(2)}</span>
+          <span class="text-gray-500">vs tile</span>
+          <span class="tabular-nums" style="color: hsl({cosHue}, 70%, 55%)">{cos.toFixed(3)}</span>
+          {#if cos < 0.8}
+            <span class="text-red-400/60 text-[8px]">outlier</span>
+          {:else if cos < 0.95}
+            <span class="text-yellow-400/60 text-[8px]">deviant</span>
+          {/if}
         </div>
       {/if}
       {#if meta}
@@ -432,28 +624,12 @@
               <span class="text-gray-400 tabular-nums">{tileStats.variance.toFixed(1)}</span>
             </div>
 
-            <!-- Embedding fingerprint — mean embedding as a waveform -->
-            <div class="text-[8px] text-gray-600 mt-1">Embedding fingerprint</div>
-            {#if tileStats.fingerprint.length > 0}
-              {@const fp = tileStats.fingerprint}
-              {@const fpMax = Math.max(...Array.from(fp).map(Math.abs)) || 1}
-              <svg viewBox="0 0 {fp.length} 40" class="w-full h-10 rounded overflow-hidden"
-                   style="background: rgba(0,0,0,0.3)">
-                <line x1="0" y1="20" x2={fp.length} y2="20" stroke="rgba(100,100,100,0.2)" stroke-width="0.5" />
-                {#each Array.from(fp) as v, i}
-                  {@const h = (v / fpMax) * 18}
-                  {@const hue = ((i / fp.length) * 270 + 180) % 360}
-                  <rect
-                    x={i}
-                    y={h >= 0 ? 20 - h : 20}
-                    width="1"
-                    height={Math.abs(h)}
-                    fill="hsl({hue}, 70%, 55%)"
-                    opacity="0.8"
-                  />
-                {/each}
-              </svg>
-            {/if}
+            <!-- Animated fingerprint: tile mean + pixel overlay with morphing + sinusoidal waves -->
+            <div class="text-[8px] text-gray-600 mt-1">
+              {$explorerPixel ? 'Pixel vs tile' : 'Tile fingerprint'}
+            </div>
+            <canvas bind:this={fpCanvasEl} width="256" height="48"
+                    class="w-full h-10 rounded" style="image-rendering: auto;"></canvas>
           </div>
         {:else if tileStatsLoading}
           <div class="text-[9px] text-gray-600 italic border-t border-gray-800/40 pt-1.5">
