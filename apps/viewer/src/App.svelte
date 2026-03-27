@@ -787,13 +787,19 @@
       if (tool === 'explorer') {
         const lng = e.lngLat.lng;
         const lat = e.lngLat.lat;
+
+        // Zoom in first if below minimum zoom for tile inspection
+        if (map.getZoom() < DWELL_MIN_ZOOM) {
+          map.flyTo({ center: [lng, lat], zoom: DWELL_MIN_ZOOM, duration: 800 });
+        }
+
         // Find which zone the click falls in
         const allZones = get(zones);
         const zone = allZones.find(z => pointInBbox(lng, lat, z.bbox));
         if (!zone) { explorerHover.set(null); return; }
         (async () => {
           try {
-            const src = await mgr.getSource(zone.id);
+            await mgr.getSource(zone.id);
             const chunk = mgr.getChunkAtLngLat(lng, lat);
             if (chunk && chunk.zoneId === zone.id) {
               explorerHover.set({
