@@ -40,6 +40,10 @@
   let osmAutoImport = $state(false);
   let sidebarOpen = $state(false);
 
+  // Last mouse position (for re-triggering fingerprint when tile data arrives)
+  let lastMouseLngLat: { lng: number; lat: number } | null = null;
+  let lastMouseClient: { x: number; y: number } | null = null;
+
   // Large region confirmation modal state
   let largeRegionOpen = $state(false);
   let largeRegionCount = $state(0);
@@ -95,17 +99,16 @@
     }
     if (maxAbs === 0) return;
 
+    fpLoading = false; // real data arrived
     fpNBands = n;
     fpTargetNorm = Math.sqrt(normSq);
 
     if (!fpTarget || fpTarget.length !== n) {
       fpTarget = new Float32Array(n);
-      fpDisplay = new Float32Array(n);
-      // Initialise display to target (no morph on first show)
-      for (let i = 0; i < n; i++) fpDisplay[i] = fpTarget[i] = embedding[i] / maxAbs;
-    } else {
-      for (let i = 0; i < n; i++) fpTarget[i] = embedding[i] / maxAbs;
+      // Keep existing display buffer for smooth morph from loading wave
+      if (!fpDisplay || fpDisplay.length !== n) fpDisplay = new Float32Array(n);
     }
+    for (let i = 0; i < n; i++) fpTarget[i] = embedding[i] / maxAbs;
 
     fpVisible = true;
     if (fpAnimId == null) fpAnimId = requestAnimationFrame(fpAnimate);
@@ -113,11 +116,25 @@
 
   function stopFingerprint() {
     fpVisible = false;
+    fpLoading = false;
   }
 
   function fpAnimate() {
     fpAnimId = null;
     if (!fpVisible || !fpDisplay || !fpTarget) return;
+
+    // During loading: generate rotating wave as the target
+    if (fpLoading) {
+      const t = performance.now() / 1000;
+      for (let i = 0; i < fpNBands; i++) {
+        const phase = (i / fpNBands) * Math.PI * 2;
+        fpTarget[i] = 0.3 + 0.7 * (
+          Math.sin(phase + t * 3) * 0.5
+          + Math.sin(phase * 3 - t * 2) * 0.3
+          + Math.sin(phase * 7 + t * 5) * 0.2
+        );
+      }
+    }
 
     // Lerp display towards target
     let maxDelta = 0;
@@ -130,7 +147,7 @@
 
     fpRender();
 
-    // Keep animating while there's visible difference
+    // Keep animating while visible
     if (maxDelta > 0.001 || fpVisible) {
       fpAnimId = requestAnimationFrame(fpAnimate);
     }
@@ -206,6 +223,33 @@
     el.style.top = `${fpMouseY - 70}px`;
   }
 
+  // --- Loading state: uses the same radial spoke system with animated synthetic targets ---
+  let fpLoading = false;
+  const FP_LOADING_BANDS = 128; // match typical embedding size
+
+  /** Start showing a loading animation — generates rotating synthetic spokes
+   *  that will smoothly morph into real data once it arrives via setFingerprintTarget. */
+  function renderFingerprintLoading(el: HTMLElement, mx: number, my: number) {
+    fpMouseX = mx;
+    fpMouseY = my;
+    el.style.display = 'block';
+    el.style.left = `${mx + 16}px`;
+    el.style.top = `${my - 70}px`;
+
+    const label = document.getElementById('emb-fingerprint-label') as HTMLElement;
+    if (label) label.textContent = 'loading...';
+
+    // Initialise display buffer if needed
+    if (!fpDisplay || fpDisplay.length !== FP_LOADING_BANDS) {
+      fpDisplay = new Float32Array(FP_LOADING_BANDS);
+      fpTarget = new Float32Array(FP_LOADING_BANDS);
+    }
+    fpNBands = FP_LOADING_BANDS;
+    fpLoading = true;
+    fpVisible = true;
+    if (fpAnimId == null) fpAnimId = requestAnimationFrame(fpAnimate);
+  }
+
   /** Set new fingerprint target and update mouse position. */
   function renderFingerprintTooltip(el: HTMLElement, embedding: Float32Array, mx: number, my: number) {
     fpMouseX = mx;
@@ -243,17 +287,6 @@
       map.addSource('tile-hover', {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
-      });
-      // Semi-transparent fill so the tile stands out
-      map.addLayer({
-        id: 'tile-hover-fill',
-        type: 'fill',
-        source: 'tile-hover',
-        paint: {
-          'fill-color': '#000000',
-          'fill-opacity': 0.15,
-          'fill-opacity-transition': { duration: 200 },
-        },
       });
       // Thick black outer stroke
       map.addLayer({
@@ -468,27 +501,44 @@
     let hoverFadeTimer: ReturnType<typeof setTimeout> | undefined;
     // Track hovered pixel for explorer fingerprint
     let hoveredPixelKey = '';
+    // Auto-select tile on dwell in explorer mode (zoom >= 12)
+    let dwellTimer: ReturnType<typeof setTimeout> | undefined;
+    let dwellChunkKey = '';
+    const DWELL_MS = 500;
+    const DWELL_MIN_ZOOM = 12;
+    // (lastMouseLngLat / lastMouseClient are declared at component scope for $effect access)
 
     // Coordinates display + tile hover highlight
     map.on('mousemove', (e) => {
+      lastMouseLngLat = { lng: e.lngLat.lng, lat: e.lngLat.lat };
+      lastMouseClient = { x: e.originalEvent.clientX, y: e.originalEvent.clientY };
       const coord = document.getElementById('coord-text');
       if (coord) coord.textContent = `${e.lngLat.lng.toFixed(4)}, ${e.lngLat.lat.toFixed(4)}`;
 
-      // Tile hover highlight
+      // Tile hover highlight + auto-select on dwell
       const mgr = get(sourceManager);
       const hoverSource = map.getSource('tile-hover') as maplibregl.GeoJSONSource | undefined;
       if (mgr && hoverSource) {
-        const chunk = mgr.getChunkAtLngLat(e.lngLat.lng, e.lngLat.lat);
+        let chunk = mgr.getChunkAtLngLat(e.lngLat.lng, e.lngLat.lat);
         const key = chunk ? `${chunk.zoneId}:${chunk.ci}_${chunk.cj}` : '';
+
+        // In explorer mode at sufficient zoom, if no source is open yet for this zone,
+        // find the zone and schedule opening it on dwell.
+        const isExplorer = get(activeTool) === 'explorer';
+        const sufficientZoom = map.getZoom() >= DWELL_MIN_ZOOM;
+        let dwellZoneId: string | null = null;
+        if (!chunk && isExplorer && sufficientZoom) {
+          const allZones = get(zones);
+          const zone = allZones.find(z => pointInBbox(e.lngLat.lng, e.lngLat.lat, z.bbox));
+          if (zone) dwellZoneId = zone.id;
+        }
+
         if (key !== hoveredChunkKey) {
           hoveredChunkKey = key;
           if (chunk) {
             const corners = mgr.getChunkBoundsLngLat(chunk.zoneId, chunk.ci, chunk.cj);
             if (corners) {
-              // Cancel any pending fade-out clear
               clearTimeout(hoverFadeTimer);
-              // Restore full opacity
-              map.setPaintProperty('tile-hover-fill', 'fill-opacity', 0.15);
               map.setPaintProperty('tile-hover-line-outer', 'line-opacity', 0.8);
               map.setPaintProperty('tile-hover-line', 'line-opacity', 0.9);
               hoverSource.setData({
@@ -503,15 +553,75 @@
                 }],
               });
             }
+
+            // Auto-select tile on dwell
+            if (isExplorer && key !== dwellChunkKey && sufficientZoom) {
+              clearTimeout(dwellTimer);
+              dwellChunkKey = key;
+              const dChunk = chunk;
+              dwellTimer = setTimeout(() => {
+                if (hoveredChunkKey !== key) return;
+                (async () => {
+                  try {
+                    await mgr.getSource(dChunk.zoneId);
+                    explorerHover.set({
+                      zoneId: dChunk.zoneId,
+                      ci: dChunk.ci, cj: dChunk.cj,
+                      years: [], utmBounds: [0, 0, 0, 0],
+                    });
+                  } catch { /* ignore */ }
+                })();
+              }, DWELL_MS);
+            }
           } else {
             // Moved off tiles — fade out
-            map.setPaintProperty('tile-hover-fill', 'fill-opacity', 0);
+            clearTimeout(dwellTimer);
+            dwellChunkKey = '';
             map.setPaintProperty('tile-hover-line-outer', 'line-opacity', 0);
             map.setPaintProperty('tile-hover-line', 'line-opacity', 0);
             clearTimeout(hoverFadeTimer);
             hoverFadeTimer = setTimeout(() => {
               hoverSource.setData({ type: 'FeatureCollection', features: [] });
             }, 250);
+
+            // If over a zone but source not open yet, schedule open+select on dwell
+            if (dwellZoneId) {
+              const zid = dwellZoneId;
+              const lng = e.lngLat.lng, lat = e.lngLat.lat;
+              clearTimeout(dwellTimer);
+              dwellChunkKey = `pending:${zid}`;
+              dwellTimer = setTimeout(() => {
+                (async () => {
+                  try {
+                    await mgr.getSource(zid);
+                    // Source is now open — retry chunk lookup
+                    const c = mgr.getChunkAtLngLat(lng, lat);
+                    if (c) {
+                      explorerHover.set({
+                        zoneId: c.zoneId,
+                        ci: c.ci, cj: c.cj,
+                        years: [], utmBounds: [0, 0, 0, 0],
+                      });
+                      // Show tile outline now that we know the chunk
+                      hoveredChunkKey = `${c.zoneId}:${c.ci}_${c.cj}`;
+                      dwellChunkKey = hoveredChunkKey;
+                      const corners = mgr.getChunkBoundsLngLat(c.zoneId, c.ci, c.cj);
+                      if (corners) {
+                        map.setPaintProperty('tile-hover-line-outer', 'line-opacity', 0.8);
+                        map.setPaintProperty('tile-hover-line', 'line-opacity', 0.9);
+                        hoverSource.setData({
+                          type: 'FeatureCollection',
+                          features: [{
+                            type: 'Feature', properties: {},
+                            geometry: { type: 'Polygon', coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]] },
+                          }],
+                        });
+                      }
+                    }
+                  } catch { /* ignore */ }
+                })();
+              }, DWELL_MS);
+            }
           }
         }
       }
@@ -521,8 +631,12 @@
       const pixSrc = map.getSource('pixel-hover') as maplibregl.GeoJSONSource | undefined;
       if (fpEl) {
         let shown = false;
+        const isExplorer = get(activeTool) === 'explorer';
         const tile = get(explorerTileEmb);
-        if (get(activeTool) === 'explorer' && mgr && tile) {
+        const onTile = isExplorer && mgr && hoveredChunkKey && map.getZoom() >= DWELL_MIN_ZOOM;
+
+        // Try to show pixel fingerprint from loaded tile data
+        if (isExplorer && mgr && tile) {
           const src = mgr.getOpenSource(tile.zoneId);
           if (src?.metadata && src.projection) {
             const meta = src.metadata;
@@ -543,7 +657,7 @@
                   const embedding = tile.emb.slice(off, off + tile.nBands);
                   renderFingerprintTooltip(fpEl, embedding, e.originalEvent.clientX, e.originalEvent.clientY);
                   shown = true;
-                  // Update pixel highlight box with pulse on change
+                  // Pixel highlight box
                   const pxKey = `${ci}:${cj}:${row}:${col}`;
                   if (pxKey !== hoveredPixelKey && pixSrc) {
                     hoveredPixelKey = pxKey;
@@ -556,7 +670,6 @@
                           geometry: { type: 'Polygon', coordinates: [[corners[0], corners[1], corners[2], corners[3], corners[0]]] },
                         }],
                       });
-                      // Flash bright on pixel change then fade back
                       map.setPaintProperty('pixel-hover-fill', 'fill-opacity', 0.4);
                       map.setPaintProperty('pixel-hover-line', 'line-opacity', 1.0);
                       map.setPaintProperty('pixel-hover-glow', 'line-opacity', 0.4);
@@ -574,6 +687,13 @@
             }
           }
         }
+
+        // Show loading spinner in the circle while on a tile but no data yet
+        if (!shown && onTile) {
+          renderFingerprintLoading(fpEl, e.originalEvent.clientX, e.originalEvent.clientY);
+          shown = true;
+        }
+
         if (!shown) {
           stopFingerprint();
           fpEl.style.display = 'none';
@@ -638,13 +758,14 @@
     map.on('mouseout', () => {
       hoveredChunkKey = '';
       hoveredPixelKey = '';
+      clearTimeout(dwellTimer);
+      dwellChunkKey = '';
       stopFingerprint();
       const fpEl = document.getElementById('emb-fingerprint');
       if (fpEl) fpEl.style.display = 'none';
       const pixSrc = map.getSource('pixel-hover') as maplibregl.GeoJSONSource | undefined;
       if (pixSrc) pixSrc.setData({ type: 'FeatureCollection', features: [] });
       // Fade opacity to 0 via transitions
-      map.setPaintProperty('tile-hover-fill', 'fill-opacity', 0);
       map.setPaintProperty('tile-hover-line-outer', 'line-opacity', 0);
       map.setPaintProperty('tile-hover-line', 'line-opacity', 0);
       // Clear data after the transition completes
@@ -850,6 +971,36 @@
         features: regions.map(r => r.feature),
       });
     }
+  });
+
+  // When tile embedding data arrives, re-trigger fingerprint at last mouse position
+  // so the loading wave morphs into the real data without needing mouse movement.
+  $effect(() => {
+    const tile = $explorerTileEmb;
+    if (!tile || !lastMouseLngLat || !lastMouseClient) return;
+    if (get(activeTool) !== 'explorer') return;
+    const mgr = get(sourceManager);
+    if (!mgr) return;
+    const src = mgr.getOpenSource(tile.zoneId);
+    if (!src?.metadata || !src.projection) return;
+    const meta = src.metadata;
+    const [easting, northing] = src.projection.forward(lastMouseLngLat.lng, lastMouseLngLat.lat);
+    const tf = meta.transform;
+    const globalCol = Math.floor((easting - tf[2]) / tf[0]);
+    const globalRow = Math.floor((tf[5] - northing) / tf[0]);
+    const cs = meta.chunkShape;
+    const ci = Math.floor(globalRow / cs[0]);
+    const cj = Math.floor(globalCol / cs[1]);
+    if (ci !== tile.ci || cj !== tile.cj) return;
+    const row = globalRow - ci * cs[0];
+    const col = globalCol - cj * cs[1];
+    if (row < 0 || row >= tile.tileH || col < 0 || col >= tile.tileW) return;
+    const pixIdx = row * tile.tileW + col;
+    const off = pixIdx * tile.nBands;
+    if (isNaN(tile.emb[off])) return;
+    const embedding = tile.emb.slice(off, off + tile.nBands);
+    const el = document.getElementById('emb-fingerprint');
+    if (el) renderFingerprintTooltip(el, embedding, lastMouseClient.x, lastMouseClient.y);
   });
 
 </script>

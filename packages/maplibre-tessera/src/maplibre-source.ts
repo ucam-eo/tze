@@ -877,7 +877,10 @@ export class MaplibreTesseraSource {
     // ROI polygon outlines should be above classification overlays
     if (this.map.getLayer('roi-regions-fill')) this.map.moveLayer('roi-regions-fill');
     if (this.map.getLayer('roi-regions-line')) this.map.moveLayer('roi-regions-line');
-    // Pixel hover highlight (explorer mode)
+    // Tile hover highlight (explorer mode — chunk outline, no fill)
+    if (this.map.getLayer('tile-hover-line-outer')) this.map.moveLayer('tile-hover-line-outer');
+    if (this.map.getLayer('tile-hover-line')) this.map.moveLayer('tile-hover-line');
+    // Pixel hover highlight (explorer mode — single pixel)
     if (this.map.getLayer('pixel-hover-glow')) this.map.moveLayer('pixel-hover-glow');
     if (this.map.getLayer('pixel-hover-fill')) this.map.moveLayer('pixel-hover-fill');
     if (this.map.getLayer('pixel-hover-line')) this.map.moveLayer('pixel-hover-line');
