@@ -4,6 +4,7 @@ import { openStore, fetchRegion, type ZarrStore } from './zarr-reader.js';
 import type {
   TesseraOptions,
   StoreMetadata,
+  TileStatistics,
   ChunkRef,
   EmbeddingRegion,
   EmbeddingAt,
@@ -353,6 +354,48 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
   }
 
   // ---------------------------------------------------------------------------
+  // Coordinate conversion (applies spatial:transform from Zarr metadata)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Convert a pixel address `(ci, cj, row, col)` to UTM coordinates.
+   * Applies the `spatial:transform` affine from the store metadata.
+   *
+   * @returns `{ easting, northing }` at the pixel centre, or `null` if the store is not open.
+   */
+  pixelToUtm(ci: number, cj: number, row: number, col: number): { easting: number; northing: number } | null {
+    if (!this.store) return null;
+    const tf = this.store.meta.transform;
+    const cs = this.store.meta.chunkShape;
+    const globalRow = ci * cs[0] + row;
+    const globalCol = cj * cs[1] + col;
+    return {
+      easting: tf[2] + (globalCol + 0.5) * tf[0],
+      northing: tf[5] - (globalRow + 0.5) * tf[0],
+    };
+  }
+
+  /**
+   * Convert a pixel address to WGS84 lng/lat.
+   *
+   * @returns `[lng, lat]` at the pixel centre, or `null` if the store is not open.
+   */
+  pixelToLngLat(ci: number, cj: number, row: number, col: number): [number, number] | null {
+    const utm = this.pixelToUtm(ci, cj, row, col);
+    if (!utm || !this.proj) return null;
+    return this.proj.inverse(utm.easting, utm.northing);
+  }
+
+  /**
+   * Convert the global row/col array index for a pixel within a chunk.
+   * This is the raw Zarr array index — use it for slicing operations.
+   */
+  pixelToGlobal(ci: number, cj: number, row: number, col: number): { globalRow: number; globalCol: number } {
+    const cs = this.store!.meta.chunkShape;
+    return { globalRow: ci * cs[0] + row, globalCol: cj * cs[1] + col };
+  }
+
+  // ---------------------------------------------------------------------------
   // Spatial queries
   // ---------------------------------------------------------------------------
 
@@ -577,14 +620,12 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     col: number,
   ): [[number, number], [number, number], [number, number], [number, number]] | null {
     if (!this.store || !this.proj) return null;
-    const t = this.store.meta.transform;
-    const px = t[0], originE = t[2], originN = t[5];
-    const cs = this.store.meta.chunkShape;
-    const globalRow = ci * cs[0] + row;
-    const globalCol = cj * cs[1] + col;
-    const minE = originE + globalCol * px;
+    const tf = this.store.meta.transform;
+    const px = tf[0];
+    const { globalRow, globalCol } = this.pixelToGlobal(ci, cj, row, col);
+    const minE = tf[2] + globalCol * px;
     const maxE = minE + px;
-    const maxN = originN - globalRow * px;
+    const maxN = tf[5] - globalRow * px;
     const minN = maxN - px;
     return this.proj.chunkCornersToLngLat({ minE, maxE, minN, maxN });
   }
@@ -675,6 +716,222 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     if (!this.store || this.store.meta.version !== 'v2') return;
     const idx = this.store.meta.years?.indexOf(year) ?? -1;
     if (idx >= 0) this.setTimeIndex(idx);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tile-level data access (public API for plugins)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch and dequantize the embeddings for a single tile.
+   *
+   * Returns a flat `Float32Array` of `tileH * tileW * nBands` floats
+   * in row-major, band-last order. Invalid pixels have `NaN` in all bands.
+   *
+   * If the tile is already in the loaded embedding region, returns a copy
+   * of that data without any HTTP requests. Otherwise fetches from the
+   * remote Zarr store.
+   *
+   * @param ci - Chunk row index.
+   * @param cj - Chunk column index.
+   */
+  async fetchTileEmbeddings(ci: number, cj: number): Promise<{
+    emb: Float32Array;
+    nBands: number;
+    tileW: number;
+    tileH: number;
+  } | null> {
+    if (!this.store) return null;
+    const meta = this.store.meta;
+    const cs = meta.chunkShape;
+    const nBands = meta.nBands;
+    const tilePixels = cs[0] * cs[1];
+
+    // Check loaded region first
+    const region = this._embeddingRegion;
+    if (region) {
+      const tIdx = (ci - region.ciMin) * region.gridCols + (cj - region.cjMin);
+      if (tIdx >= 0 && tIdx < region.loaded.length && region.loaded[tIdx]) {
+        const base = tIdx * tilePixels * nBands;
+        return {
+          emb: region.emb.slice(base, base + tilePixels * nBands),
+          nBands, tileW: region.tileW, tileH: region.tileH,
+        };
+      }
+    }
+
+    // Fetch from store — use global array indices from spatial:transform
+    const { globalRow: r0, globalCol: c0 } = this.pixelToGlobal(ci, cj, 0, 0);
+    const isV2 = meta.version === 'v2';
+    const t = meta.timeIndex ?? (meta.years ? meta.years.length - 1 : 0);
+
+    const [embView, scaleView] = await Promise.all([
+      isV2
+        ? fetchRegion(this.store.embArr, [[t, t + 1], null, [r0, r0 + cs[0]], [c0, c0 + cs[1]]])
+        : fetchRegion(this.store.embArr, [[r0, r0 + cs[0]], [c0, c0 + cs[1]], null]),
+      isV2
+        ? fetchRegion(this.store.scalesArr, [[t, t + 1], [r0, r0 + cs[0]], [c0, c0 + cs[1]]])
+        : fetchRegion(this.store.scalesArr, [[r0, r0 + cs[0]], [c0, c0 + cs[1]]]),
+    ]);
+
+    const int8 = new Int8Array(embView.data.buffer, embView.data.byteOffset, tilePixels * nBands);
+    const scalesF32 = new Float32Array(scaleView.data.buffer, scaleView.data.byteOffset, tilePixels);
+
+    const emb = new Float32Array(tilePixels * nBands);
+    for (let p = 0; p < tilePixels; p++) {
+      const s = scalesF32[p];
+      const valid = s && !isNaN(s) && isFinite(s);
+      const dst = p * nBands;
+      if (valid) {
+        if (isV2) {
+          for (let b = 0; b < nBands; b++) emb[dst + b] = int8[b * tilePixels + p] * s;
+        } else {
+          for (let b = 0; b < nBands; b++) emb[dst + b] = int8[p * nBands + b] * s;
+        }
+      } else {
+        emb[dst] = NaN;
+      }
+    }
+
+    return { emb, nBands, tileW: cs[1], tileH: cs[0] };
+  }
+
+  /**
+   * Compute statistics for a tile's dequantized embeddings.
+   *
+   * Fetches the tile if not already loaded. Returns null if the tile
+   * has no valid pixels.
+   */
+  async computeTileStatistics(ci: number, cj: number): Promise<TileStatistics | null> {
+    const tile = await this.fetchTileEmbeddings(ci, cj);
+    if (!tile) return null;
+    return TesseraSource.statsFromBuffer(tile.emb, tile.tileW * tile.tileH, tile.nBands);
+  }
+
+  /** Compute stats from a flat embedding buffer (shared implementation). */
+  static statsFromBuffer(emb: Float32Array, tilePixels: number, nBands: number): TileStatistics | null {
+    let validCount = 0, sumNorm = 0, minN = Infinity, maxN = -Infinity;
+    const meanEmb = new Float32Array(nBands);
+
+    for (let p = 0; p < tilePixels; p++) {
+      const off = p * nBands;
+      if (isNaN(emb[off])) continue;
+      validCount++;
+      let normSq = 0;
+      for (let b = 0; b < nBands; b++) {
+        const v = emb[off + b];
+        meanEmb[b] += v;
+        normSq += v * v;
+      }
+      const norm = Math.sqrt(normSq);
+      sumNorm += norm;
+      if (norm < minN) minN = norm;
+      if (norm > maxN) maxN = norm;
+    }
+    if (validCount === 0) return null;
+
+    for (let b = 0; b < nBands; b++) meanEmb[b] /= validCount;
+
+    let varSum = 0;
+    for (let p = 0; p < tilePixels; p++) {
+      const off = p * nBands;
+      if (isNaN(emb[off])) continue;
+      let distSq = 0;
+      for (let b = 0; b < nBands; b++) {
+        const d = emb[off + b] - meanEmb[b];
+        distSq += d * d;
+      }
+      varSum += distSq;
+    }
+
+    return {
+      validPixels: validCount,
+      totalPixels: tilePixels,
+      meanNorm: sumNorm / validCount,
+      minNorm: minN,
+      maxNorm: maxN,
+      variance: varSum / validCount,
+      fingerprint: meanEmb,
+    };
+  }
+
+  /**
+   * Fetch a single pixel's dequantized embedding across all time steps (v2 stores).
+   *
+   * Returns one entry per year that has valid data at this pixel.
+   * Years where the scale factor is zero/NaN/Inf are skipped.
+   *
+   * @param ci - Chunk row index.
+   * @param cj - Chunk column index.
+   * @param row - Pixel row within the chunk.
+   * @param col - Pixel column within the chunk.
+   * @returns Array of `{ year, embedding, norm }`, or empty if not v2 / no data.
+   */
+  async fetchTemporalPixel(
+    ci: number, cj: number, row: number, col: number,
+  ): Promise<{ year: number; embedding: Float32Array; norm: number }[]> {
+    if (!this.store) return [];
+    const meta = this.store.meta;
+    if (meta.version !== 'v2' || !meta.years?.length) return [];
+
+    const T = meta.years.length;
+    const nBands = meta.nBands;
+    const { globalRow: r0, globalCol: c0 } = this.pixelToGlobal(ci, cj, row, col);
+
+    const [embView, scaleView] = await Promise.all([
+      fetchRegion(this.store.embArr, [null, null, [r0, r0 + 1], [c0, c0 + 1]]),
+      fetchRegion(this.store.scalesArr, [null, [r0, r0 + 1], [c0, c0 + 1]]),
+    ]);
+
+    const scales = new Float32Array(scaleView.data.buffer, scaleView.data.byteOffset, T);
+    const int8All = new Int8Array(embView.data.buffer, embView.data.byteOffset, T * nBands);
+
+    const results: { year: number; embedding: Float32Array; norm: number }[] = [];
+    for (let t = 0; t < T; t++) {
+      const scale = scales[t];
+      if (!isFinite(scale) || scale === 0) continue;
+      const emb = new Float32Array(nBands);
+      let normSq = 0;
+      for (let b = 0; b < nBands; b++) {
+        emb[b] = int8All[t * nBands + b] * scale;
+        normSq += emb[b] * emb[b];
+      }
+      results.push({ year: meta.years[t], embedding: emb, norm: Math.sqrt(normSq) });
+    }
+    return results;
+  }
+
+  /**
+   * Find a valid pixel within a tile by probing candidate positions.
+   *
+   * Useful for coastal/partial tiles where many pixels are invalid (NaN scale).
+   * Returns `{ row, col }` of the first valid pixel found, or `null`.
+   *
+   * @param ci - Chunk row index.
+   * @param cj - Chunk column index.
+   */
+  async findValidPixel(ci: number, cj: number): Promise<{ row: number; col: number } | null> {
+    if (!this.store) return null;
+    const meta = this.store.meta;
+    const cs = meta.chunkShape;
+    const isV2 = meta.version === 'v2';
+    const t = meta.timeIndex ?? (meta.years ? meta.years.length - 1 : 0);
+
+    const offsets = [0.5, 0.3, 0.7, 0.2, 0.8];
+    for (const ry of offsets) {
+      for (const cx of offsets) {
+        const row = Math.floor(cs[0] * ry);
+        const col = Math.floor(cs[1] * cx);
+        const { globalRow: r, globalCol: c } = this.pixelToGlobal(ci, cj, row, col);
+        const sv = await fetchRegion(
+          this.store.scalesArr,
+          isV2 ? [[t, t + 1], [r, r + 1], [c, c + 1]] : [[r, r + 1], [c, c + 1]],
+        );
+        const val = (sv.data as Float32Array)[0];
+        if (isFinite(val) && val !== 0) return { row, col };
+      }
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -898,11 +1155,12 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
   private chunkPixelBounds(ci: number, cj: number): ChunkBounds {
     const s = this.store!.meta.shape;
     const cs = this.store!.meta.chunkShape;
+    const { globalRow: r0, globalCol: c0 } = this.pixelToGlobal(ci, cj, 0, 0);
     return {
-      r0: ci * cs[0],
-      r1: Math.min(ci * cs[0] + cs[0], s[0]),
-      c0: cj * cs[1],
-      c1: Math.min(cj * cs[1] + cs[1], s[1]),
+      r0,
+      r1: Math.min(r0 + cs[0], s[0]),
+      c0,
+      c1: Math.min(c0 + cs[1], s[1]),
     };
   }
 

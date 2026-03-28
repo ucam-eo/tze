@@ -89,6 +89,41 @@ export interface StoreMetadata {
 
   /** Quantization method from `geoemb:quantization.method`. */
   geoemb_quantMethod?: string;
+
+  /** Full quantization descriptor from `geoemb:quantization`. */
+  geoemb_quantization?: {
+    method: string;
+    quantized_dtype?: string;
+    original_dtype?: string;
+    scale_array?: string;
+    nodata?: string;
+    link?: string;
+  };
+
+  /** Chip layout descriptor from `geoemb:chip_layout` (required when type="chip"). */
+  geoemb_chipLayout?: {
+    layout_type: 'regular_grid' | 'irregular';
+    chip_size?: [number, number];
+    stride?: [number, number];
+    grid_id?: string;
+    grid_definition?: string;
+  };
+
+  /** Benchmark URLs from `geoemb:benchmark`. */
+  geoemb_benchmark?: string[];
+}
+
+/** Statistics for a single tile's dequantized embeddings. */
+export interface TileStatistics {
+  validPixels: number;
+  totalPixels: number;
+  meanNorm: number;
+  minNorm: number;
+  maxNorm: number;
+  /** Mean squared distance from the tile mean embedding. */
+  variance: number;
+  /** Mean embedding across all valid pixels (nBands-length). */
+  fingerprint: Float32Array;
 }
 
 /**

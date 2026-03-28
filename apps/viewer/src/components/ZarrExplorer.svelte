@@ -198,34 +198,13 @@
   let tileStatsLoading = $state(false);
   let tileStatsGen = 0;
 
-  /** Try to compute stats from already-loaded region; if not loaded, fetch on demand. */
+  /** Fetch tile embeddings + compute stats using library API (no internal access). */
   async function computeTileStats() {
     const hover = get(explorerHover);
     if (!hover || hover.ci < 0) { tileStats = null; return; }
     const mgr = get(sourceManager);
     if (!mgr) { tileStats = null; return; }
 
-    // Try from loaded region first
-    const regions = mgr.getEmbeddingRegions();
-    const region = regions.get(hover.zoneId);
-    if (region) {
-      const tIdx = (hover.ci - region.ciMin) * region.gridCols + (hover.cj - region.cjMin);
-      if (tIdx >= 0 && tIdx < region.loaded.length && region.loaded[tIdx]) {
-        // Extract tile embedding for pixel lookup
-        const tilePixels = region.tileW * region.tileH;
-        const base = tIdx * tilePixels * region.nBands;
-        const tileEmb = region.emb.slice(base, base + tilePixels * region.nBands);
-        const mean = computeStatsFromBuffer(region.emb, tIdx, tilePixels, region.nBands);
-        let meanNorm = 0;
-        if (mean) { for (let b = 0; b < mean.length; b++) meanNorm += mean[b] * mean[b]; meanNorm = Math.sqrt(meanNorm); }
-        $explorerTileEmb = { zoneId: hover.zoneId, ci: hover.ci, cj: hover.cj,
-          emb: tileEmb, nBands: region.nBands, tileW: region.tileW, tileH: region.tileH,
-          tileMean: mean ?? new Float32Array(region.nBands), tileMeanNorm: meanNorm };
-        return;
-      }
-    }
-
-    // Not in region — fetch the tile on demand
     const myGen = ++tileStatsGen;
     tileStatsLoading = true;
     tileStats = null;
@@ -233,110 +212,33 @@
     try {
       let src = mgr.getOpenSource(hover.zoneId);
       if (!src) src = await mgr.getSource(hover.zoneId);
-      const meta = src.metadata;
-      if (!meta || myGen !== tileStatsGen) { tileStatsLoading = false; return; }
-
-      const store = (src as unknown as { store: { embArr: unknown; scalesArr: unknown } }).store;
-      if (!store) { tileStatsLoading = false; return; }
-
-      const { fetchRegion } = await import('@ucam-eo/tessera');
       if (myGen !== tileStatsGen) return;
 
-      const cs = meta.chunkShape;
-      const nBands = meta.nBands;
-      const r0 = hover.ci * cs[0];
-      const c0 = hover.cj * cs[1];
-      const isV2 = meta.version === 'v2';
-      const t = meta.timeIndex ?? (meta.years ? meta.years.length - 1 : 0);
+      // Use library API — handles region cache, fetch, dequantization, v1/v2 layouts
+      const tile = await src.fetchTileEmbeddings(hover.ci, hover.cj);
+      if (!tile || myGen !== tileStatsGen) { tileStatsLoading = false; return; }
 
-      const [embView, scaleView] = await Promise.all([
-        isV2
-          ? fetchRegion(store.embArr as Parameters<typeof fetchRegion>[0], [[t, t + 1], null, [r0, r0 + cs[0]], [c0, c0 + cs[1]]])
-          : fetchRegion(store.embArr as Parameters<typeof fetchRegion>[0], [[r0, r0 + cs[0]], [c0, c0 + cs[1]], null]),
-        isV2
-          ? fetchRegion(store.scalesArr as Parameters<typeof fetchRegion>[0], [[t, t + 1], [r0, r0 + cs[0]], [c0, c0 + cs[1]]])
-          : fetchRegion(store.scalesArr as Parameters<typeof fetchRegion>[0], [[r0, r0 + cs[0]], [c0, c0 + cs[1]]]),
-      ]);
+      // Use library stats computation
+      const { TesseraSource } = await import('@ucam-eo/tessera');
       if (myGen !== tileStatsGen) return;
+      const stats = TesseraSource.statsFromBuffer(tile.emb, tile.tileW * tile.tileH, tile.nBands);
+      if (!stats) { tileStats = null; tileStatsLoading = false; return; }
 
-      const tilePixels = cs[0] * cs[1];
-      const int8 = new Int8Array(embView.data.buffer, embView.data.byteOffset, tilePixels * nBands);
-      const scalesF32 = new Float32Array(scaleView.data.buffer, scaleView.data.byteOffset, tilePixels);
+      tileStats = stats;
 
-      // Dequantise into a flat buffer and compute stats
-      const emb = new Float32Array(tilePixels * nBands);
-      for (let p = 0; p < tilePixels; p++) {
-        const s = scalesF32[p];
-        const valid = s && !isNaN(s) && isFinite(s);
-        const dst = p * nBands;
-        if (valid) {
-          if (isV2) {
-            for (let b = 0; b < nBands; b++) emb[dst + b] = int8[b * tilePixels + p] * s;
-          } else {
-            for (let b = 0; b < nBands; b++) emb[dst + b] = int8[p * nBands + b] * s;
-          }
-        } else {
-          emb[dst] = NaN;
-        }
-      }
-
-      if (myGen === tileStatsGen) {
-        const mean = computeStatsFromBuffer(emb, 0, tilePixels, nBands);
-        let meanNorm = 0;
-        if (mean) { for (let b = 0; b < mean.length; b++) meanNorm += mean[b] * mean[b]; meanNorm = Math.sqrt(meanNorm); }
-        $explorerTileEmb = { zoneId: hover.zoneId, ci: hover.ci, cj: hover.cj,
-          emb, nBands, tileW: cs[1], tileH: cs[0],
-          tileMean: mean ?? new Float32Array(nBands), tileMeanNorm: meanNorm };
-      }
+      // Populate tile emb store for per-pixel fingerprint
+      let meanNorm = 0;
+      const fp = stats.fingerprint;
+      for (let b = 0; b < fp.length; b++) meanNorm += fp[b] * fp[b];
+      meanNorm = Math.sqrt(meanNorm);
+      $explorerTileEmb = {
+        zoneId: hover.zoneId, ci: hover.ci, cj: hover.cj,
+        emb: tile.emb, nBands: tile.nBands, tileW: tile.tileW, tileH: tile.tileH,
+        tileMean: fp, tileMeanNorm: meanNorm,
+      };
     } catch { /* fetch failed */ }
 
     if (myGen === tileStatsGen) tileStatsLoading = false;
-  }
-
-  /** Compute tile stats and return the mean embedding (also stored in tileStats.fingerprint). */
-  function computeStatsFromBuffer(emb: Float32Array, tileIdx: number, tilePixels: number, nBands: number): Float32Array | null {
-    const base = tileIdx * tilePixels * nBands;
-    let validCount = 0, sumNorm = 0, minN = Infinity, maxN = -Infinity;
-    const meanEmb = new Float32Array(nBands);
-
-    for (let p = 0; p < tilePixels; p++) {
-      const off = base + p * nBands;
-      if (isNaN(emb[off])) continue;
-      validCount++;
-      let normSq = 0;
-      for (let b = 0; b < nBands; b++) {
-        const v = emb[off + b];
-        meanEmb[b] += v;
-        normSq += v * v;
-      }
-      const norm = Math.sqrt(normSq);
-      sumNorm += norm;
-      if (norm < minN) minN = norm;
-      if (norm > maxN) maxN = norm;
-    }
-    if (validCount === 0) { tileStats = null; tileStatsLoading = false; return null; }
-
-    for (let b = 0; b < nBands; b++) meanEmb[b] /= validCount;
-
-    let varSum = 0;
-    for (let p = 0; p < tilePixels; p++) {
-      const off = base + p * nBands;
-      if (isNaN(emb[off])) continue;
-      let distSq = 0;
-      for (let b = 0; b < nBands; b++) {
-        const d = emb[off + b] - meanEmb[b];
-        distSq += d * d;
-      }
-      varSum += distSq;
-    }
-
-    tileStats = {
-      validPixels: validCount, totalPixels: tilePixels,
-      meanNorm: sumNorm / validCount, minNorm: minN, maxNorm: maxN,
-      variance: varSum / validCount, fingerprint: meanEmb,
-    };
-    tileStatsLoading = false;
-    return meanEmb;
   }
 
   async function fetchTemporalData() {
@@ -349,75 +251,17 @@
     const mgr = get(sourceManager);
     if (!mgr) { temporalLoading = false; return; }
 
-    let src = mgr.getOpenSource(hover.zoneId);
-    if (!src) {
-      try { src = await mgr.getSource(hover.zoneId); } catch { temporalLoading = false; return; }
-    }
-    const meta = src.metadata;
-    if (!meta?.years?.length || meta.version !== 'v2') { temporalLoading = false; return; }
-
-    const store = (src as unknown as { store: { embArr: unknown; scalesArr: unknown } }).store;
-    if (!store) { temporalLoading = false; return; }
-
-    // Sample a few candidate pixels across the tile centre to find a valid one
-    const cs = meta.chunkShape;
-    const T = meta.years.length;
-    const nBands = meta.nBands;
-    const baseR = hover.ci * cs[0];
-    const baseC = hover.cj * cs[1];
-
-    // Candidate offsets at 30%, 50%, 70% of the tile
-    const offsets = [0.5, 0.3, 0.7, 0.2, 0.8];
-
     try {
-      const { fetchRegion } = await import('@ucam-eo/tessera');
+      let src = mgr.getOpenSource(hover.zoneId);
+      if (!src) src = await mgr.getSource(hover.zoneId);
       if (myGen !== temporalGen) return;
 
-      // Find a valid pixel by probing candidates
-      let r0 = baseR + Math.floor(cs[0] * 0.5);
-      let c0 = baseC + Math.floor(cs[1] * 0.5);
-      let foundValid = false;
+      // Find a valid pixel in this tile (handles coastal/partial tiles)
+      const px = await src.findValidPixel(hover.ci, hover.cj);
+      if (!px || myGen !== temporalGen) { temporalLoading = false; return; }
 
-      for (const ry of offsets) {
-        if (foundValid) break;
-        for (const cx of offsets) {
-          const tr = baseR + Math.floor(cs[0] * ry);
-          const tc = baseC + Math.floor(cs[1] * cx);
-          const sv = await fetchRegion(
-            store.scalesArr as Parameters<typeof fetchRegion>[0],
-            [[T - 1, T], [tr, tr + 1], [tc, tc + 1]],
-          );
-          if (myGen !== temporalGen) return;
-          const val = (sv.data as Float32Array)[0];
-          if (isFinite(val) && val !== 0) {
-            r0 = tr; c0 = tc; foundValid = true; break;
-          }
-        }
-      }
-      if (!foundValid) { temporalLoading = false; return; }
-
-      // Fetch all years at the valid pixel
-      const [embView, scaleView] = await Promise.all([
-        fetchRegion(store.embArr as Parameters<typeof fetchRegion>[0], [null, null, [r0, r0 + 1], [c0, c0 + 1]]),
-        fetchRegion(store.scalesArr as Parameters<typeof fetchRegion>[0], [null, [r0, r0 + 1], [c0, c0 + 1]]),
-      ]);
+      const results = await src.fetchTemporalPixel(hover.ci, hover.cj, px.row, px.col);
       if (myGen !== temporalGen) return;
-
-      const scales = new Float32Array(scaleView.data.buffer, scaleView.data.byteOffset, T);
-      const int8All = new Int8Array(embView.data.buffer, embView.data.byteOffset, T * nBands);
-
-      const results: YearData[] = [];
-      for (let t = 0; t < T; t++) {
-        const scale = scales[t];
-        if (!isFinite(scale) || scale === 0) continue;
-        const emb = new Float32Array(nBands);
-        let normSq = 0;
-        for (let b = 0; b < nBands; b++) {
-          emb[b] = int8All[t * nBands + b] * scale;
-          normSq += emb[b] * emb[b];
-        }
-        results.push({ year: meta.years[t], norm: Math.sqrt(normSq), embedding: emb });
-      }
       temporalData = results;
     } catch { /* fetch failed */ }
 

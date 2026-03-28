@@ -16,6 +16,7 @@ export type { LoadChunksOptions } from './tessera-source.js';
 export type {
   TesseraOptions,
   StoreMetadata,
+  TileStatistics,
   ChunkRef,
   ChunkBounds,
   ManagedChunk,

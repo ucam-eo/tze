@@ -74,19 +74,11 @@
           const col = pixelIdx % region.tileW;
           const embedding = region.emb.slice(offset, offset + region.nBands);
 
-          // Reverse-project to lng/lat
+          // Reverse-project to lng/lat using library coordinate conversion
           const src = await mgr.getSource(zoneId);
-          const meta = src.metadata;
-          const proj = src.projection;
-          if (!meta || !proj) continue;
-
-          const cs = meta.chunkShape;
-          const tf = meta.transform;
-          const globalRow = ci * cs[0] + row;
-          const globalCol = cj * cs[1] + col;
-          const easting = tf[2] + (globalCol + 0.5) * tf[0];
-          const northing = tf[5] - (globalRow + 0.5) * tf[0];
-          const [lng, lat] = proj.inverse(easting, northing);
+          const lngLat = src.pixelToLngLat(ci, cj, row, col);
+          if (!lngLat) continue;
+          const [lng, lat] = lngLat;
 
           $simSelectedPixel = { ci, cj, row, col, lng, lat };
           $simRefEmbedding = embedding;

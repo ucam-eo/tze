@@ -137,6 +137,13 @@ export async function openStore(url: string): Promise<ZarrStore> {
   const geoemSpatialLayout = geoemAttrs['geoemb:spatial_layout'] as string | undefined;
   const geoemBuildVersion = geoemAttrs['geoemb:build_version'] as string | undefined;
   const geoemSourceData = geoemAttrs['geoemb:source_data'] as string | string[] | undefined;
+  const geoemBenchmark = geoemAttrs['geoemb:benchmark'] as string[] | undefined;
+  const geoemChipLayout = geoemAttrs['geoemb:chip_layout'] as StoreMetadata['geoemb_chipLayout'];
+
+  // Validate: chip_layout is required when type is "chip"
+  if (geoemType === 'chip' && !geoemChipLayout) {
+    console.warn('[tessera] geoemb:type is "chip" but geoemb:chip_layout is missing');
+  }
 
   // Shared provenance fields injected into StoreMetadata
   const provenance = {
@@ -149,6 +156,16 @@ export async function openStore(url: string): Promise<ZarrStore> {
     geoemb_spatialLayout: geoemSpatialLayout,
     geoemb_buildVersion: geoemBuildVersion,
     geoemb_quantMethod: quantization?.method,
+    geoemb_quantization: quantization ? {
+      method: quantization.method ?? 'unknown',
+      quantized_dtype: (quantization as Record<string, unknown>).quantized_dtype as string | undefined,
+      original_dtype: quantization.original_dtype,
+      scale_array: quantization.scale_array,
+      nodata: (quantization as Record<string, unknown>).nodata as string | undefined,
+      link: (quantization as Record<string, unknown>).link as string | undefined,
+    } : undefined,
+    geoemb_chipLayout: geoemChipLayout,
+    geoemb_benchmark: geoemBenchmark,
   };
 
   // NCHW layout: 4D array with time dimension
