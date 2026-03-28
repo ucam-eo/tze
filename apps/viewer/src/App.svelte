@@ -638,18 +638,9 @@
         // Try to show pixel fingerprint from loaded tile data
         if (isExplorer && mgr && tile) {
           const src = mgr.getOpenSource(tile.zoneId);
-          if (src?.metadata && src.projection) {
-            const meta = src.metadata;
-            const [easting, northing] = src.projection.forward(e.lngLat.lng, e.lngLat.lat);
-            const tf = meta.transform;
-            const globalCol = Math.floor((easting - tf[2]) / tf[0]);
-            const globalRow = Math.floor((tf[5] - northing) / tf[0]);
-            const cs = meta.chunkShape;
-            const ci = Math.floor(globalRow / cs[0]);
-            const cj = Math.floor(globalCol / cs[1]);
-            if (ci === tile.ci && cj === tile.cj) {
-              const row = globalRow - ci * cs[0];
-              const col = globalCol - cj * cs[1];
+          const px = src?.lngLatToPixel(e.lngLat.lng, e.lngLat.lat);
+          if (px && px.ci === tile.ci && px.cj === tile.cj) {
+              const { ci, cj, row, col } = px;
               if (row >= 0 && row < tile.tileH && col >= 0 && col < tile.tileW) {
                 const pixIdx = row * tile.tileW + col;
                 const off = pixIdx * tile.nBands;
@@ -672,7 +663,7 @@
                   const pxKey = `${ci}:${cj}:${row}:${col}`;
                   if (pxKey !== hoveredPixelKey && pixSrc) {
                     hoveredPixelKey = pxKey;
-                    const corners = src.getPixelBoundsLngLat(ci, cj, row, col);
+                    const corners = src!.getPixelBoundsLngLat(ci, cj, row, col);
                     if (corners) {
                       pixSrc.setData({
                         type: 'FeatureCollection',
@@ -697,8 +688,6 @@
               }
             }
           }
-        }
-
         // Show loading spinner in the circle while on a tile but no data yet
         if (!shown && onTile) {
           renderFingerprintLoading(fpEl, e.originalEvent.clientX, e.originalEvent.clientY);
@@ -1000,20 +989,10 @@
     const mgr = get(sourceManager);
     if (!mgr) return;
     const src = mgr.getOpenSource(tile.zoneId);
-    if (!src?.metadata || !src.projection) return;
-    const meta = src.metadata;
-    const [easting, northing] = src.projection.forward(lastMouseLngLat.lng, lastMouseLngLat.lat);
-    const tf = meta.transform;
-    const globalCol = Math.floor((easting - tf[2]) / tf[0]);
-    const globalRow = Math.floor((tf[5] - northing) / tf[0]);
-    const cs = meta.chunkShape;
-    const ci = Math.floor(globalRow / cs[0]);
-    const cj = Math.floor(globalCol / cs[1]);
-    if (ci !== tile.ci || cj !== tile.cj) return;
-    const row = globalRow - ci * cs[0];
-    const col = globalCol - cj * cs[1];
-    if (row < 0 || row >= tile.tileH || col < 0 || col >= tile.tileW) return;
-    const pixIdx = row * tile.tileW + col;
+    const px = src?.lngLatToPixel(lastMouseLngLat.lng, lastMouseLngLat.lat);
+    if (!px || px.ci !== tile.ci || px.cj !== tile.cj) return;
+    if (px.row < 0 || px.row >= tile.tileH || px.col < 0 || px.col >= tile.tileW) return;
+    const pixIdx = px.row * tile.tileW + px.col;
     const off = pixIdx * tile.nBands;
     if (isNaN(tile.emb[off])) return;
     const embedding = tile.emb.slice(off, off + tile.nBands);

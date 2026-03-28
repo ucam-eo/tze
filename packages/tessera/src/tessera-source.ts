@@ -395,6 +395,27 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     return { globalRow: ci * cs[0] + row, globalCol: cj * cs[1] + col };
   }
 
+  /**
+   * Convert a WGS84 coordinate to a pixel address.
+   *
+   * @returns `{ ci, cj, row, col }` or `null` if outside the data extent.
+   */
+  lngLatToPixel(lng: number, lat: number): { ci: number; cj: number; row: number; col: number } | null {
+    if (!this.store || !this.proj) return null;
+    const [e, n] = this.proj.forward(lng, lat);
+    const tf = this.store.meta.transform;
+    const cs = this.store.meta.chunkShape;
+    const s = this.store.meta.shape;
+    const globalCol = Math.floor((e - tf[2]) / tf[0]);
+    const globalRow = Math.floor((tf[5] - n) / tf[0]);
+    if (globalCol < 0 || globalCol >= s[1] || globalRow < 0 || globalRow >= s[0]) return null;
+    const ci = Math.floor(globalRow / cs[0]);
+    const cj = Math.floor(globalCol / cs[1]);
+    const row = globalRow - ci * cs[0];
+    const col = globalCol - cj * cs[1];
+    return { ci, cj, row, col };
+  }
+
   // ---------------------------------------------------------------------------
   // Spatial queries
   // ---------------------------------------------------------------------------
