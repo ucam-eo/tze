@@ -122,13 +122,15 @@ export async function openStore(url: string): Promise<ZarrStore> {
 
   // --- Validate geoemb:quantization if present ---
   const quantization = geoemAttrs['geoemb:quantization'] as
-    { method?: string; original_dtype?: string; scale_array?: string } | undefined;
+    { method?: string; original_dtype?: string; quantized_dtype?: string;
+      scale?: { type: string; array_name?: string; nodata?: string; scale?: number; offset?: number };
+      link?: string } | undefined;
   if (quantization) {
     if (quantization.method !== 'per_pixel_scale') {
       console.warn(`[tessera] Unsupported quantization method "${quantization.method}" — only per_pixel_scale is implemented`);
     }
-    if (quantization.scale_array && quantization.scale_array !== 'scales') {
-      console.warn(`[tessera] Unexpected scale_array "${quantization.scale_array}" — expected "scales"`);
+    if (quantization.scale?.type === 'array' && quantization.scale.array_name && quantization.scale.array_name !== 'scales') {
+      console.warn(`[tessera] Unexpected scale array_name "${quantization.scale.array_name}" — expected "scales"`);
     }
   }
 
@@ -136,7 +138,7 @@ export async function openStore(url: string): Promise<ZarrStore> {
   const geoemGsd = geoemAttrs['geoemb:gsd'] as number | undefined;
   const geoemSpatialLayout = geoemAttrs['geoemb:spatial_layout'] as string | undefined;
   const geoemBuildVersion = geoemAttrs['geoemb:build_version'] as string | undefined;
-  const geoemSourceData = geoemAttrs['geoemb:source_data'] as string | string[] | undefined;
+  const geoemSourceData = geoemAttrs['geoemb:source_data'] as string[] | undefined;
   const geoemBenchmark = geoemAttrs['geoemb:benchmark'] as string[] | undefined;
   const geoemChipLayout = geoemAttrs['geoemb:chip_layout'] as StoreMetadata['geoemb_chipLayout'];
 
@@ -158,11 +160,13 @@ export async function openStore(url: string): Promise<ZarrStore> {
     geoemb_quantMethod: quantization?.method,
     geoemb_quantization: quantization ? {
       method: quantization.method ?? 'unknown',
-      quantized_dtype: (quantization as Record<string, unknown>).quantized_dtype as string | undefined,
+      quantized_dtype: quantization.quantized_dtype,
       original_dtype: quantization.original_dtype,
-      scale_array: quantization.scale_array,
-      nodata: (quantization as Record<string, unknown>).nodata as string | undefined,
-      link: (quantization as Record<string, unknown>).link as string | undefined,
+      scale: quantization.scale ? {
+        ...quantization.scale,
+        type: quantization.scale.type as 'scalar' | 'array',
+      } : undefined,
+      link: quantization.link,
     } : undefined,
     geoemb_chipLayout: geoemChipLayout,
     geoemb_benchmark: geoemBenchmark,

@@ -73,7 +73,7 @@ export interface StoreMetadata {
   geoemb_modelName?: string;
 
   /** Source dataset URL(s) from `geoemb:source_data`. */
-  geoemb_sourceData?: string | string[];
+  geoemb_sourceData?: string[];
 
   /** Stored data type from `geoemb:data_type` (e.g. "int8", "float32"). */
   geoemb_dataType?: string;
@@ -95,8 +95,17 @@ export interface StoreMetadata {
     method: string;
     quantized_dtype?: string;
     original_dtype?: string;
-    scale_array?: string;
-    nodata?: string;
+    scale?: {
+      type: 'scalar' | 'array';
+      /** Scalar scale factor (type="scalar") */
+      scale?: number;
+      /** Scalar offset (type="scalar") */
+      offset?: number;
+      /** Name of scale array (type="array") */
+      array_name?: string;
+      /** Nodata value in scale array (type="array") */
+      nodata?: string;
+    };
     link?: string;
   };
 
