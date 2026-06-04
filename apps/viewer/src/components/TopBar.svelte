@@ -585,14 +585,14 @@
         {#each DATASET_VERSIONS as version}
           <button
             onclick={() => { loadCatalog(version.url); versionDropdownOpen = false; }}
-            class="flex items-center justify-between gap-3 w-full text-left px-3 py-1
+            class="flex flex-col items-start w-full text-left px-3 py-1
                    text-[10px] transition-colors
                    {$catalogUrl === version.url
                      ? 'text-term-cyan bg-term-cyan/10'
                      : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}"
           >
             <span>{version.label}</span>
-            <span class="text-gray-600">{version.sublabel}</span>
+            <span class="text-[9px] text-gray-600">{version.sublabel}</span>
           </button>
         {/each}
         <div class="my-1 h-px bg-gray-800/60"></div>

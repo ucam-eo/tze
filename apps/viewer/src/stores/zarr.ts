@@ -10,7 +10,7 @@ export const displayManager = writable<MaplibreTesseraManager | null>(null);
 
 export const metadata = writable<StoreMetadata | null>(null);
 export const bands = writable<[number, number, number]>([0, 1, 2]);
-export const opacity = writable(0.6);
+export const opacity = writable(0.9);
 export const preview = writable<'rgb' | 'bands'>('rgb');
 export const loading = writable({ total: 0, done: 0 });
 export const status = writable('Ready');
