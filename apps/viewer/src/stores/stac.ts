@@ -2,7 +2,7 @@ import { writable, derived, get } from 'svelte/store';
 import { SourceManager } from '@ucam-eo/tessera';
 import { MaplibreTesseraManager, clearZarrProtocolCache } from '@ucam-eo/maplibre-tessera';
 import type { ZoneDescriptor } from '../lib/stac';
-import { pointInBbox } from '../lib/stac';
+import { pointInBbox, loadStore } from '../lib/stac';
 import { mapInstance } from './map';
 import { sourceManager, displayManager, metadata, bands, opacity, preview, loading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
 import { clearAllRegions } from './drawing';
@@ -10,9 +10,32 @@ import { simSelectedPixel, simScores, simRefEmbedding } from './similarity';
 import { labels, isClassified } from './classifier';
 import { segmentPolygons } from './segmentation';
 
-export const catalogUrl = writable('https://dl2.geotessera.org/zarr/v2/store.zarr');
+/** A selectable dataset version (preset zarr store). */
+export interface DatasetVersion {
+  id: string;        // 'v1.0'
+  label: string;     // 'v1.0'
+  sublabel: string;  // 'global' | 'Cambridge'
+  url: string;
+}
+
+/** Known dataset versions, surfaced as presets in the top-bar selector. */
+export const DATASET_VERSIONS: DatasetVersion[] = [
+  { id: 'v1.0', label: 'v1.0', sublabel: 'global',
+    url: 'https://dl2.geotessera.org/zarr/v2/store.zarr' },
+  { id: 'v1.1', label: 'v1.1', sublabel: 'Cambridge',
+    url: 'https://tessera-embeddings.s3.us-west-2.amazonaws.com/v1.1/cambridge.zarr' },
+];
+
+export const catalogUrl = writable(DATASET_VERSIONS[0].url);
 export const catalogStatus = writable<'idle' | 'loading' | 'loaded' | 'error'>('idle');
 export const catalogError = writable<string>('');
+
+/**
+ * Guards manager (re)initialization. Set false whenever a new catalog starts
+ * loading; the init `$effect` in CatalogModal flips it true once it has spun up
+ * the source/display managers for the freshly discovered zones.
+ */
+export const managerInitStarted = writable(false);
 
 /** All zones discovered in the store */
 export const allZones = writable<ZoneDescriptor[]>([]);
@@ -31,6 +54,54 @@ export const zones = derived(
   [allZones],
   ([$allZones]) => $allZones
 );
+
+/**
+ * Load a catalog from a zarr store URL: discover zones/years and arm the
+ * manager init `$effect`. Switching datasets invalidates all embedding-specific
+ * analysis state, so that is cleared here (a no-op on first load). Used by both
+ * the Connect Catalog modal and the top-bar version selector.
+ */
+export async function loadCatalog(url: string): Promise<void> {
+  const trimmed = url.trim();
+  if (!trimmed) return;
+
+  catalogUrl.set(trimmed);
+  catalogStatus.set('loading');
+  catalogError.set('');
+  allZones.set([]);
+  managerInitStarted.set(false);
+  status.set('Loading catalog...');
+
+  // A dataset change invalidates all embedding-specific analysis state.
+  clearAllRegions();
+  simSelectedPixel.set(null);
+  simRefEmbedding.set(null);
+  simScores.set(new Map());
+  labels.set([]);
+  isClassified.set(false);
+  segmentPolygons.set({ type: 'FeatureCollection', features: [] });
+
+  try {
+    const result = await loadStore(trimmed);
+    allZones.set(result.zones);
+    availableYears.set(result.availableYears);
+    globalPreviewUrls.set(result.globalPreviewUrls);
+
+    // Default to the latest year.
+    const defaultYear = result.availableYears[result.availableYears.length - 1] ?? '';
+    activeYear.set(defaultYear);
+
+    globalPreviewUrl.set(result.globalPreviewUrls[defaultYear] ?? result.globalPreviewUrl ?? '');
+    globalPreviewBounds.set(result.globalBounds);
+    catalogStatus.set('loaded');
+    status.set(`${result.zones.length} zones discovered${result.globalPreviewUrl ? ' (global preview available)' : ''}`);
+  } catch (err) {
+    console.error('[loadCatalog] failed:', err);
+    catalogStatus.set('error');
+    catalogError.set((err as Error).message);
+    status.set(`Catalog error: ${(err as Error).message}`);
+  }
+}
 
 /** Initialize the multi-zone source manager. */
 export async function initManager(initialZoneId?: string): Promise<void> {

@@ -1,13 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { loadStore, pointInBbox } from '../lib/stac';
+  import { pointInBbox } from '../lib/stac';
   import {
-    catalogUrl, zones, allZones, availableYears, activeYear,
-    globalPreviewUrls as globalPreviewUrlsStore,
+    catalogUrl, zones, availableYears,
     catalogStatus, catalogError, initManager,
+    loadCatalog, managerInitStarted,
   } from '../stores/stac';
   import { mapInstance } from '../stores/map';
-  import { status, globalPreviewUrl, globalPreviewBounds } from '../stores/zarr';
 
   interface Props {
     open: boolean;
@@ -29,12 +28,13 @@
 
   // Initialize the source manager when both map and zones are ready.
   // This handles the race where the catalog loads before the map's 'load' event fires.
-  let managerInitStarted = $state(false);
+  // `managerInitStarted` lives in the store so the top-bar version selector can
+  // re-arm this effect by calling loadCatalog().
   $effect(() => {
     const map = $mapInstance;
     const currentZones = $zones;
-    if (map && currentZones.length > 0 && $catalogStatus === 'loaded' && !managerInitStarted) {
-      managerInitStarted = true;
+    if (map && currentZones.length > 0 && $catalogStatus === 'loaded' && !$managerInitStarted) {
+      $managerInitStarted = true;
       const center = map.getCenter();
       let initialZoneId: string | undefined;
       for (const zone of currentZones) {
@@ -48,37 +48,7 @@
   });
 
   async function fetchCatalog() {
-    const url = urlInput.trim();
-    if (!url) return;
-
-    $catalogUrl = url;
-    $catalogStatus = 'loading';
-    $catalogError = '';
-    $allZones = [];
-    managerInitStarted = false;
-    $status = 'Loading catalog...';
-
-    try {
-      const result = await loadStore(url);
-      $allZones = result.zones;
-      $availableYears = result.availableYears;
-      $globalPreviewUrlsStore = result.globalPreviewUrls;
-
-      // Default to the latest year
-      const defaultYear = result.availableYears[result.availableYears.length - 1] ?? '';
-      $activeYear = defaultYear;
-
-      // Set preview URL for the default year
-      $globalPreviewUrl = result.globalPreviewUrls[defaultYear] ?? result.globalPreviewUrl ?? '';
-      $globalPreviewBounds = result.globalBounds;
-      $catalogStatus = 'loaded';
-      $status = `${result.zones.length} zones discovered${result.globalPreviewUrl ? ' (global preview available)' : ''}`;
-    } catch (err) {
-      console.error('[CatalogModal] fetchCatalog failed:', err);
-      $catalogStatus = 'error';
-      $catalogError = (err as Error).message;
-      $status = `Catalog error: ${(err as Error).message}`;
-    }
+    await loadCatalog(urlInput);
   }
 </script>
 

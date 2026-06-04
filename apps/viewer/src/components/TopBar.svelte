@@ -3,7 +3,7 @@
     Search, Crosshair, BoxSelect, Pentagon, Save, FolderOpen, User,
     X, Trash2, Upload, Download, Tags, Scan, ChevronDown, Layers,
   } from 'lucide-svelte';
-  import { zones, catalogStatus, availableYears, activeYear, switchYear } from '../stores/stac';
+  import { catalogStatus, catalogUrl, availableYears, activeYear, switchYear, loadCatalog, DATASET_VERSIONS } from '../stores/stac';
   import { metadata, loading } from '../stores/zarr';
   import { mapInstance } from '../stores/map';
   import { get } from 'svelte/store';
@@ -181,6 +181,11 @@
 
   // --- Year dropdown ---
   let yearDropdownOpen = $state(false);
+
+  // --- Dataset version dropdown ---
+  let versionDropdownOpen = $state(false);
+  const activeVersion = $derived(DATASET_VERSIONS.find(v => v.url === $catalogUrl));
+  const activeVersionLabel = $derived(activeVersion?.label ?? 'Custom');
 
   // --- Regions dropdown ---
   let regionsOpen = $state(false);
@@ -548,33 +553,64 @@
     </button>
   </div>
 
-  <!-- Catalog status + year selector -->
+  <!-- Dataset version + catalog status + year selector -->
   <div class="relative flex items-center shrink-0">
     <button
-      onclick={onOpenCatalog}
+      onclick={() => { versionDropdownOpen = !versionDropdownOpen; yearDropdownOpen = false; }}
       class="flex items-center gap-1 px-1.5 py-1 rounded-l
              text-gray-300 hover:bg-gray-800/60 transition-colors"
-      title="Catalog settings"
+      title="Dataset version"
     >
       <div class="w-1.5 h-1.5 rounded-full {healthColor}"></div>
       <span class="text-[10px] hidden sm:inline">
-        {#if $catalogStatus === 'loaded'}
-          {$zones.length}z
-        {:else if $catalogStatus === 'loading'}
+        {#if $catalogStatus === 'loading'}
           ...
         {:else if $catalogStatus === 'error'}
           Err
         {:else}
-          --
+          {activeVersionLabel}
         {/if}
       </span>
       {#if $metadata && $loading.total > 0}
         <span class="text-[10px] text-term-cyan/60 tabular-nums hidden sm:inline">{$loading.done}/{$loading.total}</span>
       {/if}
+      <ChevronDown size={8} class="text-gray-600" />
     </button>
+
+    {#if versionDropdownOpen}
+      <button type="button" class="fixed inset-0 z-30 cursor-default" tabindex="-1" aria-label="Close version menu" onclick={() => { versionDropdownOpen = false; }}></button>
+      <div class="absolute top-full left-0 mt-1 z-40
+                  bg-gray-950 border border-gray-700/80 rounded shadow-xl
+                  min-w-[150px] py-1">
+        {#each DATASET_VERSIONS as version}
+          <button
+            onclick={() => { loadCatalog(version.url); versionDropdownOpen = false; }}
+            class="flex items-center justify-between gap-3 w-full text-left px-3 py-1
+                   text-[10px] transition-colors
+                   {$catalogUrl === version.url
+                     ? 'text-term-cyan bg-term-cyan/10'
+                     : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}"
+          >
+            <span>{version.label}</span>
+            <span class="text-gray-600">{version.sublabel}</span>
+          </button>
+        {/each}
+        <div class="my-1 h-px bg-gray-800/60"></div>
+        <button
+          onclick={() => { onOpenCatalog(); versionDropdownOpen = false; }}
+          class="flex items-center w-full text-left px-3 py-1 text-[10px] transition-colors
+                 {activeVersion
+                   ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'
+                   : 'text-term-cyan bg-term-cyan/10'}"
+        >
+          Custom URL…
+        </button>
+      </div>
+    {/if}
+
     {#if $availableYears.length > 1}
       <button
-        onclick={() => { yearDropdownOpen = !yearDropdownOpen; }}
+        onclick={() => { yearDropdownOpen = !yearDropdownOpen; versionDropdownOpen = false; }}
         class="flex items-center gap-0.5 px-1 py-1 rounded-r
                text-term-cyan text-[10px] hover:bg-gray-800/60 transition-colors
                border-l border-gray-700/40"
