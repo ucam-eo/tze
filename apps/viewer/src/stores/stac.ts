@@ -26,7 +26,45 @@ export const DATASET_VERSIONS: DatasetVersion[] = [
     url: 'https://tessera-embeddings.s3.us-west-2.amazonaws.com/v1.1/cambridge.zarr' },
 ];
 
-export const catalogUrl = writable(DATASET_VERSIONS[0].url);
+/** Query-string key carrying the active dataset, so the page URL is shareable.
+ *  Built-in stores use a short id (`?store=v1.1`); the default v1.0 omits the
+ *  param entirely; custom stores fall back to the full URL (`?store=<zarr url>`). */
+const STORE_PARAM = 'store';
+
+/** Map an active store URL to its query-param value (null = omit the param). */
+function urlToStoreParam(url: string): string | null {
+  const version = DATASET_VERSIONS.find(v => v.url === url);
+  if (!version) return url;                          // custom store → full URL
+  if (version.id === DATASET_VERSIONS[0].id) return null;  // default → clean URL
+  return version.id;                                 // other built-ins → short id
+}
+
+/** Resolve a query-param value back to a store URL (id shorthand or raw URL). */
+function storeParamToUrl(param: string): string {
+  return DATASET_VERSIONS.find(v => v.id === param)?.url ?? param;
+}
+
+/** Read the initial store URL from the page query string, falling back to v1.0. */
+function readInitialStoreUrl(): string {
+  try {
+    const param = new URLSearchParams(window.location.search).get(STORE_PARAM);
+    if (param) return storeParamToUrl(param);
+  } catch { /* no window / malformed URL */ }
+  return DATASET_VERSIONS[0].url;
+}
+
+/** Reflect the active store into the page query string (replaceState, no nav). */
+function syncStoreUrlParam(url: string): void {
+  try {
+    const u = new URL(window.location.href);
+    const param = urlToStoreParam(url);
+    if (param === null) u.searchParams.delete(STORE_PARAM);
+    else u.searchParams.set(STORE_PARAM, param);
+    window.history.replaceState(null, '', u.toString());
+  } catch { /* no window / malformed URL */ }
+}
+
+export const catalogUrl = writable(readInitialStoreUrl());
 export const catalogStatus = writable<'idle' | 'loading' | 'loaded' | 'error'>('idle');
 export const catalogError = writable<string>('');
 
@@ -66,6 +104,7 @@ export async function loadCatalog(url: string): Promise<void> {
   if (!trimmed) return;
 
   catalogUrl.set(trimmed);
+  syncStoreUrlParam(trimmed);
   catalogStatus.set('loading');
   catalogError.set('');
   allZones.set([]);
