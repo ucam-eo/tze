@@ -4,10 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  zarrita: github:avsm/zarrita.js#a51753a73c9a4d889a0d3218ddd236bd52200d86&path:packages/zarrita
-  '@zarrita/storage': github:avsm/zarrita.js#a51753a73c9a4d889a0d3218ddd236bd52200d86&path:packages/@zarrita-storage
-
 importers:
 
   .:
@@ -114,8 +110,8 @@ importers:
         specifier: workspace:*
         version: link:../tessera
       zarrita:
-        specifier: github:avsm/zarrita.js#a51753a73c9a4d889a0d3218ddd236bd52200d86&path:packages/zarrita
-        version: https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86#path:packages/zarrita
+        specifier: ^0.7.4
+        version: 0.7.4
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -170,8 +166,8 @@ importers:
         specifier: ^2.20.4
         version: 2.20.4
       zarrita:
-        specifier: github:avsm/zarrita.js#a51753a73c9a4d889a0d3218ddd236bd52200d86&path:packages/zarrita
-        version: https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86#path:packages/zarrita
+        specifier: ^0.7.4
+        version: 0.7.4
     devDependencies:
       '@types/geojson':
         specifier: ^7946.0.16
@@ -1000,7 +996,6 @@ packages:
 
   '@types/proj4@2.19.0':
     resolution: {integrity: sha512-mirdnXu5sW9+IphQ4r+ZVii2JVLDbXgMp1lxqbiCppdgL22EwMwL4Dy/cyHVaJ2y/mi7LUQHghpILd3w3j2bnA==}
-    deprecated: This is a stub types definition. proj4 provides its own type definitions, so you do not need this installed.
 
   '@types/rbush@4.0.0':
     resolution: {integrity: sha512-+N+2H39P8X+Hy1I5mC6awlTX54k3FhiUmvt7HWzGJZvF+syUAAxP/stwppS8JE84YHqFgRMv6fCy31202CMFxQ==}
@@ -1049,9 +1044,11 @@ packages:
   '@webgpu/types@0.1.38':
     resolution: {integrity: sha512-7LrhVKz2PRh+DD7+S+PVaFd5HxaWQvoMqBbsV9fNJO1pjUs1P8bM2vQVNfk+3URTqbuTI7gkXi0rfsN0IadoBA==}
 
-  '@zarrita/storage@https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86#path:packages/@zarrita-storage':
-    resolution: {path: packages/@zarrita-storage, tarball: https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86}
-    version: 0.1.4
+  '@zarrita/storage@0.1.4':
+    resolution: {integrity: sha512-qURfJAQcQGRfDQ4J9HaCjGaj3jlJKc66bnRk6G/IeLUsM7WKyG7Bzsuf1EZurSXyc0I4LVcu6HaeQQ4d3kZ16g==}
+
+  '@zarrita/storage@0.2.0':
+    resolution: {integrity: sha512-855ZXqtnds7spnT8vNvD+MXa3QExP1m2GqShe8yt7uZXHnQLgJHgkpVwFjE1B0KDDRO0ki09hmk6OboTaIfPsQ==}
 
   acorn@8.16.0:
     resolution: {integrity: sha512-UVJyE9MttOsBQIDKw1skb9nAwQuR5wuGD3+82K6JgJlm/Y+KI92oNsMNGZCYdDsVtRHSak0pcV5Dno5+4jh9sw==}
@@ -1944,6 +1941,10 @@ packages:
     resolution: {integrity: sha512-gsq2PdJIWWGhx5kcdWStvNWit9FVdTewm4SEG7gFskWs+XCVaULt9+BwuoBtJiRE8eo3L1IPAOrbByNLtLtIlg==}
     engines: {node: '>=12'}
 
+  unzipit@2.0.0:
+    resolution: {integrity: sha512-DVeVIWUZCAQPNzm5sB0hpsG1GygTTdBnzNtYYEpInkttx5evkyqRgZi6rTczoySqp8hO5jHVKzrH0f23X8FZLg==}
+    engines: {node: '>=18'}
+
   uzip-module@1.0.3:
     resolution: {integrity: sha512-AMqwWZaknLM77G+VPYNZLEruMGWGzyigPK3/Whg99B3S6vGHuqsyl5ZrOv1UUF3paGK1U6PM0cnayioaryg/fA==}
 
@@ -2104,9 +2105,11 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
-  zarrita@https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86#path:packages/zarrita:
-    resolution: {path: packages/zarrita, tarball: https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86}
-    version: 0.6.1
+  zarrita@0.6.1:
+    resolution: {integrity: sha512-YOMTW8FT55Rz+vadTIZeOFZ/F2h4svKizyldvPtMYSxPgSNcRkOzkxCsWpIWlWzB1I/LmISmi0bEekOhLlI+Zw==}
+
+  zarrita@0.7.4:
+    resolution: {integrity: sha512-NChufj86SceFj45z4CYjndmI98dphaG7hU8Wj0UGpMyT21o0V3HTY6zo87aSobYWts1tNFivSXzH2AR1AkaWjA==}
 
   zimmerframe@1.1.4:
     resolution: {integrity: sha512-B58NGBEoc8Y9MWWCQGl/gq9xBCe4IiKM0a2x7GZdQKOW5Exr8S1W24J6OgM1njK8xCRGvAJIL/MxXHf6SkmQKQ==}
@@ -2873,10 +2876,15 @@ snapshots:
 
   '@webgpu/types@0.1.38': {}
 
-  '@zarrita/storage@https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86#path:packages/@zarrita-storage':
+  '@zarrita/storage@0.1.4':
     dependencies:
       reference-spec-reader: 0.2.0
       unzipit: 1.4.3
+
+  '@zarrita/storage@0.2.0':
+    dependencies:
+      reference-spec-reader: 0.2.0
+      unzipit: 2.0.0
 
   acorn@8.16.0: {}
 
@@ -3379,7 +3387,7 @@ snapshots:
       geotiff: 3.0.5
       pbf: 4.0.1
       rbush: 4.0.1
-      zarrita: https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86#path:packages/zarrita
+      zarrita: 0.6.1
 
   onnxruntime-common@1.24.2: {}
 
@@ -3723,6 +3731,8 @@ snapshots:
     dependencies:
       uzip-module: 1.0.3
 
+  unzipit@2.0.0: {}
+
   uzip-module@1.0.3: {}
 
   vite-node@3.2.4(@types/node@22.19.15)(jiti@2.6.1)(lightningcss@1.32.0)(yaml@2.8.2):
@@ -3937,9 +3947,14 @@ snapshots:
 
   yaml@2.8.2: {}
 
-  zarrita@https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86#path:packages/zarrita:
+  zarrita@0.6.1:
     dependencies:
-      '@zarrita/storage': https://codeload.github.com/avsm/zarrita.js/tar.gz/a51753a73c9a4d889a0d3218ddd236bd52200d86#path:packages/@zarrita-storage
+      '@zarrita/storage': 0.1.4
+      numcodecs: 0.3.2
+
+  zarrita@0.7.4:
+    dependencies:
+      '@zarrita/storage': 0.2.0
       numcodecs: 0.3.2
 
   zimmerframe@1.1.4: {}

@@ -87,7 +87,9 @@ The viewer holds separate stores: `sourceManager` (data: SourceManager) and `dis
 - **Terra-draw** for polygon/rectangle ROI drawing
 - **TensorFlow.js** (WebGL backend) for GPU-accelerated k-NN — lazy-loaded via `import()`
 - **ONNX Runtime Web** (WASM) for neural network inference — lazy-loaded via `import()`
-- **zarrita** (custom fork, pinned to SHA `9fd3970`) for Zarr v3 HTTP reads
+- **zarrita** 0.7 (upstream npm) for Zarr v3 HTTP reads, with the `withRangeCoalescing`
+  store extension composed via `zarr.extendStore()` to merge concurrent range requests
+  into fewer fetches (matters for sharded embedding arrays)
 - **pnpm** workspaces, build order: tessera → maplibre-tessera → tessera-tasks → viewer
 - **Changesets** for versioning and npm publishing (`pnpm changeset`, `pnpm release`)
 

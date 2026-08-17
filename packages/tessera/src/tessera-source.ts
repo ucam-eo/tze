@@ -991,23 +991,8 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     const expectedBytes = w * h * nBands;
 
     this.emit('embedding-progress', {
-      ci, cj, stage: 'fetching',
-      bytes: expectedBytes, bytesLoaded: 0,
+      ci, cj, stage: 'fetching', bytes: expectedBytes,
     });
-
-    const onProgress = (ev: {
-      bytes_loaded: number;
-      chunks_completed: number;
-      chunks_total: number;
-    }) => {
-      this.emit('embedding-progress', {
-        ci, cj, stage: 'fetching',
-        bytes: expectedBytes,
-        bytesLoaded: ev.bytes_loaded,
-        chunksCompleted: ev.chunks_completed,
-        chunksTotal: ev.chunks_total,
-      });
-    };
 
     // Check for abort before starting the fetch
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -1021,14 +1006,14 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     if (isV2) {
       // v2 NCHW: embeddings[t, :, r0:r1, c0:c1], scales[t, r0:r1, c0:c1]
       [embView, scalesView] = await Promise.all([
-        fetchRegion(this.store.embArr, [[t, t + 1], null, [r0, r1], [c0, c1]], { onProgress }),
-        fetchRegion(this.store.scalesArr, [[t, t + 1], [r0, r1], [c0, c1]]),
+        fetchRegion(this.store.embArr, [[t, t + 1], null, [r0, r1], [c0, c1]], { signal }),
+        fetchRegion(this.store.scalesArr, [[t, t + 1], [r0, r1], [c0, c1]], { signal }),
       ]);
     } else {
       // v1 HWB: embeddings[r0:r1, c0:c1, :], scales[r0:r1, c0:c1]
       [embView, scalesView] = await Promise.all([
-        fetchRegion(this.store.embArr, [[r0, r1], [c0, c1], null], { onProgress }),
-        fetchRegion(this.store.scalesArr, [[r0, r1], [c0, c1]]),
+        fetchRegion(this.store.embArr, [[r0, r1], [c0, c1], null], { signal }),
+        fetchRegion(this.store.scalesArr, [[r0, r1], [c0, c1]], { signal }),
       ]);
     }
 

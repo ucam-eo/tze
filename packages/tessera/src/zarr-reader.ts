@@ -64,13 +64,16 @@ export interface ZarrStore {
  * @returns Opened store with array handles and metadata.
  *
  * @remarks
- * Uses zarrita's FetchStore + CoalescingStore for efficient HTTP
- * range requests. Reads group attributes for CRS, transform, and
- * array discovery.
+ * Uses zarrita's FetchStore with the `withRangeCoalescing` extension for
+ * efficient HTTP range requests: concurrent `getRange` calls on the same
+ * path within a microtask are merged into one fetch. Reads group attributes
+ * for CRS, transform, and array discovery.
  */
 export async function openStore(url: string): Promise<ZarrStore> {
-  const fetchStore = new zarr.FetchStore(url);
-  const store = new zarr.CoalescingStore(fetchStore);
+  const store = await zarr.extendStore(
+    new zarr.FetchStore(url),
+    zarr.withRangeCoalescing,
+  );
   const rootLoc = zarr.root(store);
   const group = await zarr.open(rootLoc, { kind: 'group' });
   const attrs = group.attrs as Record<string, unknown>;
@@ -85,8 +88,10 @@ export async function openStore(url: string): Promise<ZarrStore> {
   const parentUrl = url.replace(/\/[^/]+\/?$/, '');
   if (parentUrl !== url) {
     try {
-      const parentFetch = new zarr.FetchStore(parentUrl);
-      const parentStore = new zarr.CoalescingStore(parentFetch);
+      const parentStore = await zarr.extendStore(
+        new zarr.FetchStore(parentUrl),
+        zarr.withRangeCoalescing,
+      );
       const parentGroup = await zarr.open(zarr.root(parentStore), { kind: 'group' });
       geoemAttrs = parentGroup.attrs as Record<string, unknown>;
     } catch { /* parent not readable */ }
@@ -266,19 +271,17 @@ export async function openStore(url: string): Promise<ZarrStore> {
  * @param arr - A zarrita array handle.
  * @param slices - Per-axis slice: `[start, end]` or `null` for full axis.
  * @param opts - Optional configuration.
- * @param opts.onProgress - Optional progress callback (bytes loaded).
+ * @param opts.signal - Optional abort signal, forwarded to the store.
  * @returns Raw typed array and shape.
  */
 export async function fetchRegion(
   arr: zarr.Array<zarr.DataType>,
   slices: (null | [number, number])[],
-  opts?: { onProgress?: zarr.ProgressCallback },
+  opts?: { signal?: AbortSignal },
 ): Promise<{ data: ArrayBufferView; shape: number[] }> {
   const sel = slices.map(s =>
     s === null ? null : zarr.slice(s[0], s[1])
   );
-  const chunk = await zarr.get(arr, sel, {
-    onProgress: opts?.onProgress,
-  });
+  const chunk = await zarr.get(arr, sel, { signal: opts?.signal });
   return chunk as { data: ArrayBufferView; shape: number[] };
 }

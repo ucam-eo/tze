@@ -285,15 +285,6 @@ export interface EmbeddingProgress {
 
   /** Expected total bytes for this chunk. */
   bytes?: number;
-
-  /** Bytes received so far. */
-  bytesLoaded?: number;
-
-  /** Number of Zarr sub-chunks fetched. */
-  chunksCompleted?: number;
-
-  /** Total Zarr sub-chunks to fetch. */
-  chunksTotal?: number;
 }
 
 /**

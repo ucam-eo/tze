@@ -17,33 +17,6 @@ function abortError(): DOMException {
   return new DOMException('Tile request aborted', 'AbortError');
 }
 
-/**
- * A FetchStore wrapper that injects a mutable AbortSignal into every HTTP
- * request. The signal can be swapped per tile request so that when MapLibre
- * cancels a tile, the underlying `fetch()` is also aborted — freeing the
- * browser connection slot immediately (critical for Safari's strict limits).
- */
-class AbortableFetchStore {
-  private inner: zarr.FetchStore;
-  signal: AbortSignal | null = null;
-
-  constructor(url: string | URL) {
-    this.inner = new zarr.FetchStore(url);
-  }
-
-  get url() { return this.inner.url; }
-
-  async get(key: string, opts: RequestInit & { onBytes?: (n: number) => void } = {}): Promise<Uint8Array | undefined> {
-    if (this.signal) opts = { ...opts, signal: this.signal };
-    return (this.inner as unknown as { get(k: string, o?: unknown): Promise<Uint8Array | undefined> }).get(key, opts);
-  }
-
-  async getRange(key: string, range: unknown, opts: RequestInit & { onBytes?: (n: number) => void } = {}): Promise<Uint8Array | undefined> {
-    if (this.signal) opts = { ...opts, signal: this.signal };
-    return (this.inner as unknown as { getRange(k: string, r: unknown, o?: unknown): Promise<Uint8Array | undefined> }).getRange(key, range, opts);
-  }
-}
-
 interface PyramidLevel {
   arr: zarr.Array<zarr.DataType>;
   shape: [number, number, number]; // [lat, lon, band]
@@ -51,16 +24,20 @@ interface PyramidLevel {
 
 interface CachedPyramid {
   levels: PyramidLevel[];
-  store: AbortableFetchStore;
 }
 
-// Cache: storeUrl/variable → opened pyramid (with abortable store)
+// Cache: storeUrl/variable → opened pyramid
 const pyramidCache = new Map<string, Promise<CachedPyramid>>();
 
 async function openPyramid(storeUrl: string, variable: string): Promise<CachedPyramid> {
-  const fetchStore = new AbortableFetchStore(storeUrl);
-  const coalStore = new zarr.CoalescingStore(fetchStore as unknown as zarr.FetchStore);
-  const rootLoc = zarr.root(coalStore);
+  // No abort signal here: the pyramid is opened once and shared by every tile,
+  // so binding it to one tile's signal would let that tile's cancellation
+  // poison the cached handle. Per-tile signals go to `zarr.get` instead.
+  const store = await zarr.extendStore(
+    new zarr.FetchStore(storeUrl),
+    zarr.withRangeCoalescing,
+  );
+  const rootLoc = zarr.root(store);
   const group = await zarr.open(rootLoc, { kind: 'group' });
   const attrs = group.attrs as Record<string, unknown>;
 
@@ -75,7 +52,7 @@ async function openPyramid(storeUrl: string, variable: string): Promise<CachedPy
     const arr = await zarr.open(rootLoc.resolve(path), { kind: 'array' });
     levels.push({ arr, shape: arr.shape as [number, number, number] });
   }
-  return { levels, store: fetchStore };
+  return { levels };
 }
 
 function getOrOpenPyramid(storeUrl: string, variable: string): Promise<CachedPyramid> {
@@ -140,9 +117,6 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
     const pyramid = await getOrOpenPyramid(storeUrl, variable);
     if (signal.aborted) throw abortError();
 
-    // Inject this tile's abort signal into the store so fetch() calls are cancellable
-    pyramid.store.signal = signal;
-
     const level = selectLevel(pyramid.levels, z);
     const bounds = tileBounds(z, x, y);
 
@@ -167,9 +141,14 @@ export function registerZarrProtocol(maplibregl: { addProtocol: (name: string, h
       return { data: new ArrayBuffer(0) };
     }
 
-    // Fetch the region from Zarr — abort signal is injected into the store's
-    // fetch() calls, so cancelled tiles truly release the connection.
-    const result = await zarr.get(level.arr, [zarr.slice(r0, r1), zarr.slice(c0, c1), null]);
+    // Fetch the region from Zarr — the signal is forwarded to the store's
+    // fetch() calls, so cancelled tiles truly release the connection
+    // (critical for Safari's strict connection limits).
+    const result = await zarr.get(
+      level.arr,
+      [zarr.slice(r0, r1), zarr.slice(c0, c1), null],
+      { signal },
+    );
     if (signal.aborted) throw abortError();
 
     const rawData = result.data as Uint8Array;

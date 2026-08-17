@@ -231,8 +231,10 @@ export class TesseraTileRenderer {
   }
 
   private async openPyramid(): Promise<PyramidLevel[]> {
-    const fetchStore = new zarr.FetchStore(this.url);
-    const store = new zarr.CoalescingStore(fetchStore);
+    const store = await zarr.extendStore(
+      new zarr.FetchStore(this.url),
+      zarr.withRangeCoalescing,
+    );
     const rootLoc = zarr.root(store);
     const group = await zarr.open(rootLoc, { kind: 'group' });
     const attrs = group.attrs as Record<string, unknown>;
