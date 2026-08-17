@@ -21,7 +21,9 @@ export interface DatasetVersion {
 /** Known dataset versions, surfaced as presets in the top-bar selector. */
 export const DATASET_VERSIONS: DatasetVersion[] = [
   { id: 'v1.0', label: 'v1.0', sublabel: 'global',
-    url: 'https://dl2.geotessera.org/zarr/v2/store.zarr' },
+    url: 'https://data.source.coop/tessera/tessera/zarr/v1' },
+  // Still served from S3 while the source.coop copy is being processed; it will
+  // move to `https://data.source.coop/tessera/tessera/zarr/v1.1-cam` once ready.
   { id: 'v1.1', label: 'v1.1', sublabel: 'Cambridge',
     url: 'https://tessera-embeddings.s3.us-west-2.amazonaws.com/v1.1/cambridge.zarr' },
 ];
@@ -210,9 +212,13 @@ export async function switchYear(year: string): Promise<void> {
   isClassified.set(false);
   segmentPolygons.set({ type: 'FeatureCollection', features: [] });
 
-  // Update global preview URL for this year
+  // Update global preview URL for this year. The store-level `global_rgb` array
+  // has no time axis, so this is normally the same URL across every year — in
+  // which case the preview layer is left on the map untouched below.
   const urls = get(globalPreviewUrls);
-  globalPreviewUrl.set(urls[year] ?? '');
+  const previewUrl = urls[year] ?? '';
+  const previewUnchanged = previewUrl !== '' && previewUrl === get(globalPreviewUrl);
+  globalPreviewUrl.set(previewUrl);
 
   // Reinitialize the source manager with the new year's zones
   const filteredZones = get(zones);
@@ -220,7 +226,7 @@ export async function switchYear(year: string): Promise<void> {
   if (!map || filteredZones.length === 0) return;
 
   const oldDisplay = get(displayManager);
-  if (oldDisplay) oldDisplay.remove();
+  if (oldDisplay) oldDisplay.remove({ keepPreview: previewUnchanged });
 
   status.set(`Switching to ${year}...`);
 
@@ -246,8 +252,10 @@ export async function switchYear(year: string): Promise<void> {
     sm.on('loading', (p) => loading.set(p));
     sm.on('error', (err) => status.set(`Error: ${err.message}`));
 
-    // Clear stale pyramid cache from previous year's tiles
-    clearZarrProtocolCache();
+    // The zarr:// protocol serves only the year-independent global RGB preview,
+    // and its pyramid cache is keyed by store URL — nothing goes stale on a year
+    // switch, so keep it and avoid reopening the preview store.
+    if (!previewUnchanged) clearZarrProtocolCache();
 
     await dm.addTo(map);
     sourceManager.set(sm);

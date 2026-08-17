@@ -109,17 +109,23 @@ export class MaplibreTesseraSource {
   /**
    * Remove all layers from the map and release display resources.
    * Does NOT close the underlying TesseraSource.
+   *
+   * `keepPreview` leaves the shared global-preview layer on the map. Use it when
+   * swapping in a replacement source that renders the same preview URL (e.g. a
+   * year switch, where the store-level RGB preview is unchanged), so the imagery
+   * is not torn down and refetched. A replacement source takes ownership of the
+   * surviving layer in `addPreviewLayer()`.
    */
-  remove(): void {
+  remove(opts?: { keepPreview?: boolean }): void {
     // Remove preview tile layer
-    if (this.map) {
+    if (this.map && !opts?.keepPreview) {
       try {
         if (this.previewLayerId && this.map.getLayer(this.previewLayerId)) this.map.removeLayer(this.previewLayerId);
         if (this.previewSourceId && this.map.getSource(this.previewSourceId)) this.map.removeSource(this.previewSourceId);
       } catch { /* already removed */ }
-      this.previewLayerId = null;
-      this.previewSourceId = null;
     }
+    this.previewLayerId = null;
+    this.previewSourceId = null;
 
     if (this.moveHandler && this.map) {
       this.map.off('moveend', this.moveHandler);

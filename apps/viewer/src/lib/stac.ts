@@ -139,8 +139,9 @@ export async function loadStore(storeUrl: string, signal?: AbortSignal): Promise
     const resp = await fetch(`${gpUrl}/zarr.json`, { signal });
     if (resp.ok) {
       globalPreviewUrl = gpUrl;
-      const latestYear = years[years.length - 1];
-      if (latestYear) globalPreviewUrls[String(latestYear)] = gpUrl;
+      // `global_rgb` is a store-level array with lat/lon dimensions only — it has
+      // no time axis, so the same preview applies to every year.
+      for (const year of years) globalPreviewUrls[String(year)] = gpUrl;
       globalBounds = [-180, -90, 180, 90];
     }
   } catch { /* no global preview */ }

@@ -41,10 +41,11 @@ export class MaplibreTesseraManager {
 
   /**
    * Remove all display sources, close all open zone sources, and release
-   * resources.
+   * resources. Pass `keepPreview` to leave the shared global-preview layer on
+   * the map for a replacement manager that renders the same preview URL.
    */
-  remove(): void {
-    for (const ds of this.displaySources.values()) ds.remove();
+  remove(opts?: { keepPreview?: boolean }): void {
+    for (const ds of this.displaySources.values()) ds.remove(opts);
     this.displaySources.clear();
     this.manager.close();
     this.map = null;
