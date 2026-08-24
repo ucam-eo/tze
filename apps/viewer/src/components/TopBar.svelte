@@ -2,6 +2,7 @@
   import {
     Search, Crosshair, BoxSelect, Pentagon, Save, FolderOpen, User,
     X, Trash2, Upload, Download, Tags, Scan, ChevronDown, Layers,
+    Sun, Moon,
   } from 'lucide-svelte';
   import { catalogStatus, catalogUrl, availableYears, activeYear, switchYear, loadCatalog, DATASET_VERSIONS } from '../stores/stac';
   import { metadata, loading, networkActivity } from '../stores/zarr';
@@ -15,6 +16,7 @@
   import { activeClass } from '../stores/classifier';
   import TutorialDropdown from './TutorialDropdown.svelte';
   import { welcomeJustDismissed } from '../stores/welcome';
+  import { theme, toggleTheme } from '../stores/theme';
 
   interface Props {
     onOpenCatalog: () => void;
@@ -648,6 +650,21 @@
   </div>
 
   <div class="w-px h-4 bg-gray-700/40 hidden sm:block"></div>
+
+  <!-- Theme toggle -->
+  <button
+    onclick={toggleTheme}
+    class="flex items-center justify-center w-6 h-6 rounded shrink-0
+           text-gray-500 border border-gray-700/60
+           hover:text-term-cyan hover:border-term-cyan/40 transition-all"
+    title={$theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+  >
+    {#if $theme === 'dark'}
+      <Sun size={12} />
+    {:else}
+      <Moon size={12} />
+    {/if}
+  </button>
 
   <!-- Save / Load / Login -->
   <div class="hidden sm:flex items-center gap-0.5">

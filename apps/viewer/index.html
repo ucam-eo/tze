@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TZE — Tessera Zarr Explorer</title>
+  <script>
+    // Apply the saved theme before first paint to avoid a dark flash.
+    try {
+      if (localStorage.getItem('tze-theme') === 'light')
+        document.documentElement.dataset.theme = 'light';
+    } catch (e) { /* localStorage unavailable — keep the dark default */ }
+  </script>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 </head>
 <body>

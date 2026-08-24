@@ -7,10 +7,49 @@
   --color-term-dim: #6b7280;
 }
 
+/* Light theme (issue #1: UI hard to read on projectors).
+   Every Tailwind colour utility resolves through a var(--color-*) custom
+   property, so re-mapping the palette here flips the whole UI without
+   touching component markup. The grey ramp is reversed with a darkening
+   bias so dim text stays legible on white; the neon terminal accents
+   become darker tones that hold contrast on light backgrounds. */
+html[data-theme="light"] {
+  --color-black: #ffffff;
+  --color-white: #111827;
+
+  --color-gray-950: #f9fafb;
+  --color-gray-900: #f3f4f6;
+  --color-gray-800: #e5e7eb;
+  --color-gray-700: #d1d5db;
+  --color-gray-600: #6b7280;
+  --color-gray-500: #4b5563;
+  --color-gray-400: #374151;
+  --color-gray-300: #1f2937;
+  --color-gray-200: #111827;
+  --color-gray-100: #030712;
+
+  --color-term-green: #15803d;
+  --color-term-cyan: #0e7490;
+
+  /* Status accents: -400 shades are tuned for dark backgrounds; darken
+     them (and the odd -300) so they read on white. */
+  --color-red-400: #dc2626;
+  --color-red-300: #ef4444;
+  --color-green-400: #16a34a;
+  --color-yellow-400: #ca8a04;
+  --color-amber-400: #d97706;
+  --color-amber-300: #d97706;
+  --color-orange-400: #ea580c;
+  --color-purple-400: #9333ea;
+  --color-blue-400: #2563eb;
+}
+
 body { margin: 0; padding: 0; overflow: hidden; background: #000; }
+html[data-theme="light"] body { background: #fff; }
 #map { position: absolute; inset: 0; z-index: 0; }
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+html[data-theme="light"] ::-webkit-scrollbar-thumb { background: #c4c8ce; }
 
