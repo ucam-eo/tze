@@ -2,7 +2,7 @@
   import { ChevronDown, Sun } from 'lucide-svelte';
   import { sourceManager, metadata } from '../stores/zarr';
   import { segmentPolygons } from '../stores/segmentation';
-  import { fullDepth, estimateBytes, formatBytes } from '../stores/depth';
+  import { fullDepth, loadedDepth, estimateBytes, formatBytes } from '../stores/depth';
   import { roiRegions, upgradeRegions } from '../stores/drawing';
   import type { SegmentationSession } from '@ucam-eo/tessera-tasks';
 
@@ -32,7 +32,7 @@
 
   // The UNet declares in_channels: 128 and its normalisation stats are 128
   // long, so it cannot run on a region loaded at a shallower depth.
-  const regionDepth = $derived($sourceManager?.regionDepth ?? null);
+  const regionDepth = $derived($loadedDepth || null);
   const needsUpgrade = $derived(!!regionDepth && !!$fullDepth && regionDepth < $fullDepth);
   const upgradeBytes = $derived.by(() => {
     const cs = $metadata?.chunkShape;

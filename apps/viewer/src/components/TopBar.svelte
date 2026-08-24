@@ -226,16 +226,18 @@
   let regionsOpen = $state(false);
   let upgrading = $state(false);
 
-  /** Regions loaded below full depth, which an upgrade would widen. */
-  const shallowRegions = $derived(
-    $roiRegions.filter(r => r.depth && $fullDepth && r.depth < $fullDepth),
+  /** Whether the loaded data is narrower than the store offers.
+   *  Keyed on the width actually in memory, the same fact upgradeRegions
+   *  acts on, so the button cannot offer an upgrade that would no-op. */
+  const canUpgrade = $derived(
+    $roiRegions.length > 0 && !!$loadedDepth && !!$fullDepth && $loadedDepth < $fullDepth,
   );
 
   /** Decoded size of re-reading every shallow region at full depth. */
   const upgradeBytes = $derived.by(() => {
     const cs = $metadata?.chunkShape;
     if (!cs || !$fullDepth) return 0;
-    const tiles = shallowRegions.reduce((n, r) => n + r.chunkKeys.length, 0);
+    const tiles = $roiRegions.reduce((n, r) => n + r.chunkKeys.length, 0);
     return estimateBytes(tiles, cs[0], cs[1], $fullDepth);
   });
 
@@ -581,7 +583,7 @@
             {/each}
           </div>
 
-          {#if shallowRegions.length > 0}
+          {#if canUpgrade}
             <button
               onclick={runUpgrade}
               disabled={upgrading}

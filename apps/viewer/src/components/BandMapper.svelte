@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { bands, displayManager, metadata, sourceManager } from '../stores/zarr';
+  import { bands, displayManager, metadata } from '../stores/zarr';
+  import { loadedDepth } from '../stores/depth';
 
   let r = $state($bands[0]);
   let g = $state($bands[1]);
@@ -12,7 +13,7 @@
 
   const enabled = $derived(!!$metadata);
   /** Highest band the loaded region actually carries. */
-  const maxBand = $derived(Math.max(0, ($sourceManager?.regionDepth ?? $metadata?.nBands ?? 128) - 1));
+  const maxBand = $derived(Math.max(0, ($loadedDepth || $metadata?.nBands || 128) - 1));
 
   // A shallower region cannot show the bands a deeper one could.
   $effect(() => {

@@ -192,6 +192,16 @@ export async function upgradeRegions(): Promise<void> {
     return;
   }
 
+  // Decide from the width actually in memory, never from RoiRegion.depth.
+  // That field is bookkeeping and can drift: an upgrade that reloaded nothing
+  // used to stamp every region as full anyway, so each later attempt skipped
+  // the reload it was asked for and reported success.
+  if (sm.regionDepth === full) {
+    upgradeState.set({ kind: 'done', depth: full, tiles: 0 });
+    loadedDepth.set(full);
+    return;
+  }
+
   upgradeState.set({ kind: 'running' });
   loadDepth.set(full);
   segmentPolygons.set({ type: 'FeatureCollection', features: [] });
@@ -200,8 +210,8 @@ export async function upgradeRegions(): Promise<void> {
 
   try {
     let reloaded = 0;
-    for (const region of get(roiRegions)) {
-      if (region.depth === full) continue;
+    const regions = get(roiRegions);
+    for (const region of regions) {
       const geometry = region.feature.geometry as GeoJSON.Polygon;
       const managedChunks = await sm.getChunksInRegion(geometry);
       if (managedChunks.length === 0) continue;
@@ -209,7 +219,17 @@ export async function upgradeRegions(): Promise<void> {
       reloaded += managedChunks.length;
     }
 
-    roiRegions.update(rs => rs.map(r => ({ ...r, depth: full })));
+    // Record what the data actually is now, not what was intended.
+    const after = sm.regionDepth ?? 0;
+    roiRegions.update(rs => rs.map(r => ({ ...r, depth: after || undefined })));
+
+    if (reloaded === 0) {
+      upgradeState.set({
+        kind: 'error',
+        message: `nothing reloaded — ${regions.length} region(s) covered no chunks`,
+      });
+      return;
+    }
 
     // Re-extract vectors captured at the old width.
     labels.update(ls => ls.map(l => {
@@ -224,7 +244,7 @@ export async function upgradeRegions(): Promise<void> {
     }
 
     simEmbeddingTileCount.set(sm.totalTileCount());
-    upgradeState.set({ kind: 'done', depth: sm.regionDepth ?? full, tiles: reloaded });
+    upgradeState.set({ kind: 'done', depth: after || full, tiles: reloaded });
   } catch (err) {
     // A rejection here used to vanish, leaving the button looking inert.
     upgradeState.set({ kind: 'error', message: (err as Error).message });
