@@ -7,7 +7,6 @@
   import SimilaritySearch from './SimilaritySearch.svelte';
   import LabelPanel from './LabelPanel.svelte';
   import SegmentPanel from './SegmentPanel.svelte';
-  import ZarrExplorer from './ZarrExplorer.svelte';
 
   const enabled = $derived(!!$metadata);
 
@@ -46,7 +45,9 @@
     {:else if $activeTool === 'segmenter'}
       <SegmentPanel />
     {:else if $activeTool === 'explorer'}
-      <ZarrExplorer />
+      <div class="text-[10px] text-gray-500 leading-relaxed">
+        Click a tile on the map to open its inspector.
+      </div>
     {/if}
   </div>
 </div>

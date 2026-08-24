@@ -15,6 +15,8 @@
  */
 import type { TileRendererOptions } from './types.js';
 import * as zarr from 'zarrita';
+import { withRangeCoalescing, withRequestCoalescing } from './coalescing.js';
+import { withRetry } from './retry.js';
 
 const TILE_SIZE = 256;
 
@@ -225,7 +227,14 @@ export class TesseraTileRenderer {
 
   private getOrOpenPyramid(): Promise<PyramidLevel[]> {
     if (!this.pyramidCache) {
-      this.pyramidCache = this.openPyramid();
+      // Evict on failure: a cached rejection would break every later tile for
+      // the lifetime of this renderer, turning one transient error into a
+      // permanently blank layer.
+      const p: Promise<PyramidLevel[]> = this.openPyramid().catch((err) => {
+        if (this.pyramidCache === p) this.pyramidCache = null;
+        throw err;
+      });
+      this.pyramidCache = p;
     }
     return this.pyramidCache;
   }
@@ -233,10 +242,12 @@ export class TesseraTileRenderer {
   private async openPyramid(): Promise<PyramidLevel[]> {
     const store = await zarr.extendStore(
       new zarr.FetchStore(this.url),
-      zarr.withRangeCoalescing,
+      withRetry,
+      withRequestCoalescing,
+      withRangeCoalescing,
     );
     const rootLoc = zarr.root(store);
-    const group = await zarr.open(rootLoc, { kind: 'group' });
+    const group = await zarr.open.v3(rootLoc, { kind: 'group' });
     const attrs = group.attrs as Record<string, unknown>;
 
     const ms = attrs.multiscales as { layout: { asset: string }[] } | undefined;
@@ -247,7 +258,7 @@ export class TesseraTileRenderer {
     const levels: PyramidLevel[] = [];
     for (const entry of ms.layout) {
       const path = `${entry.asset}/${this.variable}`;
-      const arr = await zarr.open(rootLoc.resolve(path), { kind: 'array' });
+      const arr = await zarr.open.v3(rootLoc.resolve(path), { kind: 'array' });
       levels.push({
         arr,
         shape: arr.shape as [number, number, number],

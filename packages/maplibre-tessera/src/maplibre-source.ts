@@ -9,7 +9,7 @@ import {
   type ChunkBounds,
   type DebugLogEntry,
 } from '@ucam-eo/tessera';
-import type { CachedChunk, PreviewMode, MaplibreDisplayOptions } from './types.js';
+import type { CachedChunk, MaplibreDisplayOptions } from './types.js';
 import { WorkerPool } from './worker-pool.js';
 import { RegionLoadingAnimation } from './region-loading-animation.js';
 import { clearZarrProtocolCache } from './zarr-tile-protocol.js';
@@ -50,7 +50,6 @@ export class MaplibreTesseraSource {
     this.opts = {
       bands: options?.bands ?? [0, 1, 2],
       opacity: options?.opacity ?? 0.8,
-      preview: options?.preview ?? 'rgb',
       maxCached: options?.maxCached ?? 50,
       maxLoadPerUpdate: options?.maxLoadPerUpdate ?? 80,
       globalPreviewUrl: options?.globalPreviewUrl ?? '',
@@ -174,22 +173,6 @@ export class MaplibreTesseraSource {
     }
   }
 
-  /** Switch the preview rendering mode (rgb | bands). */
-  setPreview(mode: PreviewMode): void {
-    this.opts.preview = mode;
-    if (this.previewLayerId && this.opts.globalPreviewUrl && this.map) {
-      // Remove and re-add with new variable -- protocol URL encodes the variable
-      clearZarrProtocolCache();
-      this.removePreviewLayer();
-      this.addPreviewLayer();
-    } else {
-      // Legacy path: clear cache and reload with new preview mode
-      for (const [key] of this.chunkCache) this.removeChunkFromMap(key);
-      this.chunkCache.clear();
-      this.updateVisibleChunks();
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // Layer management
   // ---------------------------------------------------------------------------
@@ -211,11 +194,10 @@ export class MaplibreTesseraSource {
       this.recolorAllChunks();
     }
 
-    // Re-add any remaining per-tile chunk layers (preview tiles etc.)
+    // Re-add any remaining per-tile chunk layers
     let reAdded = 0;
     for (const [, entry] of this.chunkCache) {
       if (!entry.canvas) continue;
-      if (this.previewLayerId && entry.isPreview) continue;
       entry.sourceId = null;
       entry.layerId = null;
       const ids = this.addChunkToMap(entry.ci, entry.cj, entry.canvas);
@@ -592,7 +574,6 @@ export class MaplibreTesseraSource {
     const result: [number, number][] = [];
     for (let ci = ciMin; ci <= ciMax; ci++) {
       for (let cj = cjMin; cj <= cjMax; cj++) {
-        if (store.chunkManifest && !store.chunkManifest.has(`${ci}_${cj}`)) continue;
         result.push([ci, cj]);
       }
     }
@@ -650,10 +631,6 @@ export class MaplibreTesseraSource {
       toLoad.length = this.opts.maxLoadPerUpdate;
     }
 
-    // Determine preview mode
-    const meta = this.source.metadata!;
-    const usePreview = this.opts.preview === 'rgb' && meta.hasRgb;
-
     let done = 0;
     const concurrency = 4; // default concurrency for viewport tiles
 
@@ -661,7 +638,7 @@ export class MaplibreTesseraSource {
       if (signal.aborted) break;
       const batch = toLoad.slice(i, i + concurrency);
       await Promise.all(batch.map(([ci, cj]) =>
-        this.loadChunk(ci, cj, signal, usePreview).then(() => {
+        this.loadChunk(ci, cj, signal).then(() => {
           done++;
         }),
       ));
@@ -679,9 +656,9 @@ export class MaplibreTesseraSource {
     }
   }
 
-  /** Load a single viewport preview tile. */
+  /** Load a single viewport tile and render it from embedding bands. */
   private async loadChunk(
-    ci: number, cj: number, signal: AbortSignal, usePreview: boolean,
+    ci: number, cj: number, signal: AbortSignal,
   ): Promise<void> {
     const store = this.source._store;
     if (!store) return;
@@ -693,37 +670,22 @@ export class MaplibreTesseraSource {
       const h = r1 - r0;
       const w = c1 - c0;
 
-      let result: Record<string, unknown>;
+      const [embView, scalesView] = await Promise.all([
+        fetchRegion(store.embArr, [[r0, r1], [c0, c1], null]),
+        fetchRegion(store.scalesArr, [[r0, r1], [c0, c1]]),
+      ]);
+      if (signal.aborted) return;
+      const embBuf = new Int8Array(
+        embView.data.buffer, embView.data.byteOffset, embView.data.byteLength,
+      ).slice().buffer;
+      const scalesBuf = new Uint8Array(
+        new Float32Array(scalesView.data.buffer, scalesView.data.byteOffset, scalesView.data.byteLength).buffer,
+      ).slice().buffer;
 
-      if (usePreview && !this.source.regionHasTile(ci, cj)) {
-        const previewArr = store.rgbArr!;
-        const rgbView = await fetchRegion(previewArr, [[r0, r1], [c0, c1], null]);
-        if (signal.aborted) return;
-        const rgbData = new Uint8Array(
-          rgbView.data.buffer, rgbView.data.byteOffset, rgbView.data.byteLength,
-        ).slice().buffer;
-
-        result = await this.workerPool!.dispatch({
-          type: 'render-rgb', rgbData, width: w, height: h,
-        }, [rgbData]);
-      } else {
-        const [embView, scalesView] = await Promise.all([
-          fetchRegion(store.embArr, [[r0, r1], [c0, c1], null]),
-          fetchRegion(store.scalesArr, [[r0, r1], [c0, c1]]),
-        ]);
-        if (signal.aborted) return;
-        const embBuf = new Int8Array(
-          embView.data.buffer, embView.data.byteOffset, embView.data.byteLength,
-        ).slice().buffer;
-        const scalesBuf = new Uint8Array(
-          new Float32Array(scalesView.data.buffer, scalesView.data.byteOffset, scalesView.data.byteLength).buffer,
-        ).slice().buffer;
-
-        result = await this.workerPool!.dispatch({
-          type: 'render-emb', embRaw: embBuf, scalesRaw: scalesBuf,
-          width: w, height: h, nBands: store.meta.nBands, bands: this.opts.bands,
-        }, [embBuf, scalesBuf]);
-      }
+      const result = await this.workerPool!.dispatch({
+        type: 'render-emb', embRaw: embBuf, scalesRaw: scalesBuf,
+        width: w, height: h, nBands: store.meta.nBands, bands: this.opts.bands,
+      }, [embBuf, scalesBuf]);
 
       let canvas: HTMLCanvasElement | null = null;
       let sourceId: string | null = null;
@@ -736,13 +698,13 @@ export class MaplibreTesseraSource {
 
       this.chunkCache.set(key, {
         ci, cj,
-        canvas, sourceId, layerId, isPreview: usePreview,
+        canvas, sourceId, layerId,
       });
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
       this.chunkCache.set(key, {
         ci, cj,
-        canvas: null, sourceId: null, layerId: null, isPreview: false,
+        canvas: null, sourceId: null, layerId: null,
       });
     }
   }
@@ -826,11 +788,6 @@ export class MaplibreTesseraSource {
 
       this.previewSourceId = sourceId;
       this.previewLayerId = layerId;
-
-      // Remove legacy preview chunk layers
-      for (const [key, entry] of this.chunkCache) {
-        if (entry.isPreview) this.removeChunkFromMap(key);
-      }
 
       this.raiseOverlayLayers();
     } catch (err) {

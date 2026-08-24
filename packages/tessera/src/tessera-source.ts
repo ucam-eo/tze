@@ -1,6 +1,8 @@
 import { EventEmitter } from './event-emitter.js';
 import { UtmProjection } from './projection.js';
-import { openStore, fetchRegion, type ZarrStore } from './zarr-reader.js';
+import { openStore, openArray, fetchRegion, type ZarrStore } from './zarr-reader.js';
+import { dequantiseNCHW } from './dequantise.js';
+import { depthWindowCost, type DepthWindowResult } from './depths.js';
 import type {
   TesseraOptions,
   StoreMetadata,
@@ -99,6 +101,9 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
   /** Contiguous embedding buffer for all loaded tiles. */
   private _embeddingRegion: EmbeddingRegion | null = null;
 
+  /** Lazily opened matryoshka depth arrays, keyed by array name. */
+  private depthArrays = new Map<string, ReturnType<typeof openArray>>();
+
   /**
    * @param opts - Configuration for the Zarr store connection.
    */
@@ -152,9 +157,6 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     this.proj = new UtmProjection(this.store.meta.epsg);
     this.debug('info', `Store opened: zone ${this.store.meta.utmZone}, EPSG:${this.store.meta.epsg}, ${this.store.meta.nBands} bands`);
     this.debug('info', `Shape: ${this.store.meta.shape.join('x')}, chunks: ${this.store.meta.chunkShape.join('x')}`);
-    if (this.store.chunkManifest) {
-      this.debug('info', `Manifest: ${this.store.chunkManifest.size} chunks with data`);
-    }
     this.emit('metadata-loaded', this.store.meta);
     return this.store.meta;
   }
@@ -169,6 +171,7 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     this._embeddingRegion = null;
     this.store = null;
     this.proj = null;
+    this.depthArrays.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -505,7 +508,6 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     const result: ChunkRef[] = [];
     for (let ci = ciMin; ci <= ciMax; ci++) {
       for (let cj = cjMin; cj <= cjMax; cj++) {
-        if (this.store.chunkManifest && !this.store.chunkManifest.has(`${ci}_${cj}`)) continue;
         if (this.regionHasTile(ci, cj)) continue;
 
         // Chunk bounds in UTM
@@ -818,6 +820,95 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
   }
 
   /**
+   * Matryoshka depths this store offers, ascending (e.g. `[4, 16, 128]`).
+   *
+   * Empty when the store ships only its full-depth embeddings array, or
+   * before the store is open.
+   */
+  get depths(): number[] {
+    return (this.store?.meta.geoemb_depths ?? []).map(d => d.dimensions);
+  }
+
+  /**
+   * Fetch one pixel window at one matryoshka depth.
+   *
+   * @param opts - The depth to read and the window to read it over.
+   * @param opts.depth - Dimensions per pixel; must be one of {@link depths}.
+   * @param opts.r0 - First row of the window.
+   * @param opts.c0 - First column of the window.
+   * @param opts.height - Window height in pixels.
+   * @param opts.width - Window width in pixels.
+   * @param opts.signal - Optional abort signal.
+   * @returns Dequantised embeddings and what the read cost, or `null` if the
+   *   store is closed, offers no such depth, or the window is empty.
+   *
+   * @remarks
+   * Reads the truncated array directly rather than slicing a full-depth
+   * fetch, which is the point: the shallower arrays are byte-exact prefixes
+   * of the full vector, so the values match what a full read would give
+   * while transferring proportionally fewer bytes. Independent of the loaded
+   * embedding region — it neither reads from nor writes to it.
+   */
+  async fetchDepthWindow(opts: {
+    depth: number;
+    r0: number;
+    c0: number;
+    height: number;
+    width: number;
+    signal?: AbortSignal;
+  }): Promise<DepthWindowResult | null> {
+    if (!this.store) return null;
+    const { depth, r0, c0, height, width, signal } = opts;
+    if (height <= 0 || width <= 0) return null;
+
+    const descriptor = (this.store.meta.geoemb_depths ?? [])
+      .find(d => d.dimensions === depth);
+    if (!descriptor) return null;
+
+    const arr = await this.getDepthArray(descriptor.array);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+    const t = this.store.meta.timeIndex ?? 0;
+    const r1 = r0 + height;
+    const c1 = c0 + width;
+
+    const [embView, scaleView] = await Promise.all([
+      fetchRegion(arr, [[t, t + 1], null, [r0, r1], [c0, c1]], { signal }),
+      fetchRegion(this.store.scalesArr, [[t, t + 1], [r0, r1], [c0, c1]], { signal }),
+    ]);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
+    const pixels = height * width;
+    const int8 = new Int8Array(
+      embView.data.buffer, embView.data.byteOffset, pixels * depth,
+    );
+    const scalesF32 = new Float32Array(
+      scaleView.data.buffer, scaleView.data.byteOffset, pixels,
+    );
+
+    const emb = new Float32Array(pixels * depth);
+    dequantiseNCHW(int8, scalesF32, height, width, depth, emb, 0);
+
+    // Chunk shape is [1, bands, rows, cols] for the NCHW layout.
+    const chunks = arr.chunks as number[];
+    const cost = depthWindowCost({ r0, c0, height, width }, chunks[2], chunks[3], depth);
+
+    return { emb, nBands: depth, r0, c0, height, width, ...cost };
+  }
+
+  /** Open a depth array once and reuse the handle. */
+  private getDepthArray(name: string): ReturnType<typeof openArray> {
+    // The full-depth array is already open — don't open a second handle to it.
+    if (name === 'embeddings') return Promise.resolve(this.store!.embArr);
+    let arr = this.depthArrays.get(name);
+    if (!arr) {
+      arr = openArray(this.store!, name);
+      this.depthArrays.set(name, arr);
+    }
+    return arr;
+  }
+
+  /**
    * Compute statistics for a tile's dequantized embeddings.
    *
    * Fetches the tile if not already loaded. Returns null if the tile
@@ -1041,24 +1132,8 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
       const embBase = pixBase * nBands;
 
       if (isV2) {
-        // v2 NCHW: embInt8 is [1, B, h, w] — band-first layout
-        // Dequantise with transpose: read band-first, write pixel-first
-        for (let row = 0; row < h; row++) {
-          for (let col = 0; col < w; col++) {
-            const pixIdx = row * w + col;
-            const s = scalesF32[pixIdx];
-            const valid = s && !isNaN(s) && isFinite(s);
-            const dst = embBase + pixIdx * nBands;
-            if (valid) {
-              for (let b = 0; b < nBands; b++) {
-                // NCHW: offset = b * h * w + row * w + col
-                region.emb[dst + b] = embInt8[b * h * w + pixIdx] * s;
-              }
-            } else {
-              for (let b = 0; b < nBands; b++) region.emb[dst + b] = NaN;
-            }
-          }
-        }
+        // v2 NCHW: embInt8 is [1, B, h, w] — band-first, transposed on the way in
+        dequantiseNCHW(embInt8, scalesF32, h, w, nBands, region.emb, embBase);
       } else {
         // v1 HWB: embInt8 is [h, w, B] — pixel-first layout
         for (let i = 0; i < h * w; i++) {

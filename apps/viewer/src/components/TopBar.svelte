@@ -4,7 +4,7 @@
     X, Trash2, Upload, Download, Tags, Scan, ChevronDown, Layers,
   } from 'lucide-svelte';
   import { catalogStatus, catalogUrl, availableYears, activeYear, switchYear, loadCatalog, DATASET_VERSIONS } from '../stores/stac';
-  import { metadata, loading } from '../stores/zarr';
+  import { metadata, loading, networkActivity } from '../stores/zarr';
   import { mapInstance } from '../stores/map';
   import { get } from 'svelte/store';
   import { roiDrawing, drawMode, roiRegions, roiLoading, roiTileCount, clearAllRegions, removeRegion, addRegion, type DrawMode } from '../stores/drawing';
@@ -21,13 +21,37 @@
 
   let { onOpenCatalog }: Props = $props();
 
-  // --- Health indicator ---
-  const healthColor = $derived(
-    $catalogStatus === 'loaded' ? 'bg-green-400 shadow-[0_0_4px_rgba(74,222,128,0.6)]'
-    : $catalogStatus === 'loading' ? 'bg-yellow-400 shadow-[0_0_4px_rgba(250,204,21,0.6)]'
-    : $catalogStatus === 'error' ? 'bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.6)]'
-    : 'bg-gray-500'
+  // --- Health / network activity indicator ---
+  // A hard failure outranks a retry, which outranks routine traffic. Only the
+  // colour and a soft pulse change; the dot never changes size, so sustained
+  // tile loading stays quiet in the corner of the eye.
+  const health = $derived(
+    $catalogStatus === 'error' ? 'error'
+    : $catalogStatus === 'loading' ? 'catalog'
+    : $networkActivity.retrying > 0 ? 'retrying'
+    : $networkActivity.inflight > 0 ? 'active'
+    : $catalogStatus === 'loaded' ? 'idle'
+    : 'unknown'
   );
+
+  const healthColor = $derived({
+    error:    'bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.6)]',
+    catalog:  'bg-yellow-400 shadow-[0_0_4px_rgba(250,204,21,0.6)]',
+    retrying: 'bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.7)] net-pulse',
+    active:   'bg-term-cyan shadow-[0_0_4px_rgba(0,229,255,0.6)] net-pulse',
+    idle:     'bg-green-400 shadow-[0_0_4px_rgba(74,222,128,0.6)]',
+    unknown:  'bg-gray-500',
+  }[health]);
+
+  const plural = (n: number) => (n === 1 ? '' : 's');
+  const healthTitle = $derived({
+    error:    'Catalog unavailable',
+    catalog:  'Loading catalog…',
+    retrying: `Retrying ${$networkActivity.retrying} request${plural($networkActivity.retrying)} — connection unstable`,
+    active:   `Loading ${$networkActivity.inflight} request${plural($networkActivity.inflight)}`,
+    idle:     'Dataset version — idle',
+    unknown:  'Dataset version',
+  }[health]);
 
   // --- Search ---
   interface NominatimResult {
@@ -184,6 +208,16 @@
 
   // --- Dataset version dropdown ---
   let versionDropdownOpen = $state(false);
+
+  // Tile progress overlay. `loading.total === 0` means "nothing to show" —
+  // stores/zarr.ts clears it on completion, on a stall, and on dataset or
+  // year switch, so this never strands a stale count on screen.
+  const showTileProgress = $derived(
+    $metadata !== null && $loading.total > 0 && !versionDropdownOpen && !yearDropdownOpen
+  );
+  const tileProgressPct = $derived(
+    $loading.total > 0 ? Math.min(100, ($loading.done / $loading.total) * 100) : 0
+  );
   const activeVersion = $derived(DATASET_VERSIONS.find(v => v.url === $catalogUrl));
   const activeVersionLabel = $derived(activeVersion?.label ?? 'Custom');
 
@@ -559,9 +593,9 @@
       onclick={() => { versionDropdownOpen = !versionDropdownOpen; yearDropdownOpen = false; }}
       class="flex items-center gap-1 px-1.5 py-1 rounded-l
              text-gray-300 hover:bg-gray-800/60 transition-colors"
-      title="Dataset version"
+      title={healthTitle}
     >
-      <div class="w-1.5 h-1.5 rounded-full {healthColor}"></div>
+      <div class="w-1.5 h-1.5 rounded-full transition-colors {healthColor}"></div>
       <span class="text-[10px] hidden sm:inline">
         {#if $catalogStatus === 'loading'}
           ...
@@ -571,11 +605,30 @@
           {activeVersionLabel}
         {/if}
       </span>
-      {#if $metadata && $loading.total > 0}
-        <span class="text-[10px] text-term-cyan/60 tabular-nums hidden sm:inline">{$loading.done}/{$loading.total}</span>
-      {/if}
       <ChevronDown size={8} class="text-gray-600" />
     </button>
+
+    <!-- Tile progress. Absolutely positioned and pointer-events-none so it
+         floats clear of the bar: the button keeps its width whether or not a
+         load is running, and the top bar never reflows. Suppressed while a
+         dropdown is open, since both anchor to top-full. -->
+    {#if showTileProgress}
+      <div
+        class="absolute top-full right-0 mt-1 z-20 pointer-events-none
+               flex flex-col items-stretch gap-0.5 px-1.5 py-1 w-[4.5rem]
+               bg-gray-950/95 border border-gray-700/60 rounded shadow-lg
+               tile-progress"
+        aria-hidden="true"
+      >
+        <span class="text-[9px] text-term-cyan/80 tabular-nums text-center leading-none">
+          {$loading.done}/{$loading.total}
+        </span>
+        <div class="h-0.5 bg-gray-800 rounded-full overflow-hidden">
+          <div class="h-full bg-term-cyan/70 rounded-full transition-all duration-150"
+               style="width: {tileProgressPct}%"></div>
+        </div>
+      </div>
+    {/if}
 
     {#if versionDropdownOpen}
       <button type="button" class="fixed inset-0 z-30 cursor-default" tabindex="-1" aria-label="Close version menu" onclick={() => { versionDropdownOpen = false; }}></button>
@@ -650,5 +703,29 @@
   @keyframes welcome-glow {
     0%, 100% { box-shadow: none; }
     50% { box-shadow: 0 0 8px rgba(0, 229, 255, 0.6), 0 0 16px rgba(0, 229, 255, 0.25); }
+  }
+
+  /* Tile progress chip: fade in, so a short load does not pop. */
+  .tile-progress {
+    animation: tile-progress-in 120ms ease-out;
+  }
+  @keyframes tile-progress-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tile-progress { animation: none; }
+  }
+
+  /* Network activity: fade the status dot rather than move or resize it. */
+  .net-pulse {
+    animation: net-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes net-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .net-pulse { animation: none; opacity: 0.7; }
   }
 </style>

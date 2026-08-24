@@ -6,4 +6,4 @@ export { MaplibreTesseraManager } from './maplibre-manager.js';
 export { registerZarrProtocol, clearZarrProtocolCache } from './zarr-tile-protocol.js';
 
 // Display-only types
-export type { PreviewMode, MaplibreDisplayOptions, CachedChunk } from './types.js';
+export type { MaplibreDisplayOptions, CachedChunk } from './types.js';

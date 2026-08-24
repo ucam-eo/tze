@@ -1,3 +1,5 @@
+import type { DepthDescriptor } from './depths.js';
+
 /**
  * Configuration for opening a single TESSERA Zarr store.
  */
@@ -47,9 +49,6 @@ export interface StoreMetadata {
 
   /** Number of embedding dimensions (typically 128). */
   nBands: number;
-
-  /** Whether the store contains a pre-rendered RGB preview array. */
-  hasRgb: boolean;
 
   /** Dataset version: 'v1' (HWB layout) or 'v2' (NCHW layout with time). */
   version: 'v1' | 'v2';
@@ -120,6 +119,17 @@ export interface StoreMetadata {
 
   /** Benchmark URLs from `geoemb:benchmark`. */
   geoemb_benchmark?: string[];
+
+  /**
+   * Matryoshka embedding depths from `geoemb:depths`, ascending.
+   *
+   * @remarks
+   * Present only on stores that ship truncated copies of the embeddings
+   * array. Each entry names a Zarr array holding a byte-exact prefix of the
+   * full vector, so a shallower depth reads proportionally fewer bytes.
+   * Absent or empty on stores with only the full-depth array.
+   */
+  geoemb_depths?: DepthDescriptor[];
 }
 
 /** Statistics for a single tile's dequantized embeddings. */

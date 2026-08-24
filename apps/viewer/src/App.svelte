@@ -13,6 +13,7 @@
   import ControlPanel from './components/ControlPanel.svelte';
   import DebugConsole from './components/DebugConsole.svelte';
   import ToolSwitcher from './components/ToolSwitcher.svelte';
+  import ZarrExplorer from './components/ZarrExplorer.svelte';
   import type SimilaritySearch from './components/SimilaritySearch.svelte';
   import { sourceManager, displayManager } from './stores/zarr';
   import { get } from 'svelte/store';
@@ -21,7 +22,7 @@
   import { zones } from './stores/stac';
   import { pointInBbox } from './lib/stac';
   import { segmentPolygons, segmentVisible } from './stores/segmentation';
-  import { explorerHover, explorerTileEmb, explorerPixel } from './stores/zarr-explorer';
+  import { explorerHover, explorerPinned, explorerTileEmb, explorerPixel } from './stores/zarr-explorer';
   import UmapCloud from './components/UmapCloud.svelte';
   import TutorialOverlay from './components/TutorialOverlay.svelte';
   import { simEmbeddingTileCount, simSelectedPixel } from './stores/similarity';
@@ -39,10 +40,6 @@
   let osmModalOpen = $state(false);
   let osmAutoImport = $state(false);
   let sidebarOpen = $state(false);
-
-  // Last mouse position (for re-triggering fingerprint when tile data arrives)
-  let lastMouseLngLat: { lng: number; lat: number } | null = null;
-  let lastMouseClient: { x: number; y: number } | null = null;
 
   // Large region confirmation modal state
   let largeRegionOpen = $state(false);
@@ -72,193 +69,6 @@
     const layers = map.getStyle().layers;
     const bottomLayerId = layers.length > 0 ? layers[0].id : undefined;
     map.addLayer({ id: 'basemap', type: 'raster', source: 'basemap' }, bottomLayerId);
-  }
-
-  // --- Animated radial fingerprint ---
-  // Display values lerp towards target for smooth morphing between pixels
-  let fpDisplay: Float32Array | null = null;    // current animated values (normalised)
-  let fpTarget: Float32Array | null = null;     // target values (normalised)
-  let fpTargetNorm = 0;
-  let fpNBands = 0;
-  let fpAnimId: number | null = null;
-  let fpVisible = false;
-  let fpMouseX = 0, fpMouseY = 0;
-
-  const FP_LERP = 0.15; // per-frame lerp factor (0 = frozen, 1 = instant)
-  const FP_S = 120;
-  const FP_CX = FP_S / 2, FP_CY = FP_S / 2;
-  const FP_MAX_R = 52;
-
-  function setFingerprintTarget(embedding: Float32Array) {
-    const n = embedding.length;
-    let maxAbs = 0, normSq = 0;
-    for (let i = 0; i < n; i++) {
-      const a = Math.abs(embedding[i]);
-      if (a > maxAbs) maxAbs = a;
-      normSq += embedding[i] * embedding[i];
-    }
-    if (maxAbs === 0) return;
-
-    fpLoading = false; // real data arrived
-    fpNBands = n;
-    fpTargetNorm = Math.sqrt(normSq);
-
-    if (!fpTarget || fpTarget.length !== n) {
-      fpTarget = new Float32Array(n);
-      // Keep existing display buffer for smooth morph from loading wave
-      if (!fpDisplay || fpDisplay.length !== n) fpDisplay = new Float32Array(n);
-    }
-    for (let i = 0; i < n; i++) fpTarget[i] = embedding[i] / maxAbs;
-
-    fpVisible = true;
-    if (fpAnimId == null) fpAnimId = requestAnimationFrame(fpAnimate);
-  }
-
-  function stopFingerprint() {
-    fpVisible = false;
-    fpLoading = false;
-  }
-
-  function fpAnimate() {
-    fpAnimId = null;
-    if (!fpVisible || !fpDisplay || !fpTarget) return;
-
-    // During loading: generate rotating wave as the target
-    if (fpLoading) {
-      const t = performance.now() / 1000;
-      for (let i = 0; i < fpNBands; i++) {
-        const phase = (i / fpNBands) * Math.PI * 2;
-        fpTarget[i] = 0.3 + 0.7 * (
-          Math.sin(phase + t * 3) * 0.5
-          + Math.sin(phase * 3 - t * 2) * 0.3
-          + Math.sin(phase * 7 + t * 5) * 0.2
-        );
-      }
-    }
-
-    // Lerp display towards target
-    let maxDelta = 0;
-    for (let i = 0; i < fpNBands; i++) {
-      const d = fpTarget[i] - fpDisplay[i];
-      fpDisplay[i] += d * FP_LERP;
-      const ad = Math.abs(d);
-      if (ad > maxDelta) maxDelta = ad;
-    }
-
-    fpRender();
-
-    // Keep animating while visible
-    if (maxDelta > 0.001 || fpVisible) {
-      fpAnimId = requestAnimationFrame(fpAnimate);
-    }
-  }
-
-  function fpRender() {
-    if (!fpDisplay) return;
-    const canvas = document.getElementById('emb-fingerprint-canvas') as HTMLCanvasElement;
-    const label = document.getElementById('emb-fingerprint-label') as HTMLElement;
-    const el = document.getElementById('emb-fingerprint');
-    if (!canvas || !el) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const S = FP_S, cx = FP_CX, cy = FP_CY, maxR = FP_MAX_R;
-    const n = fpNBands;
-    const tau = Math.PI * 2;
-
-    ctx.clearRect(0, 0, S, S);
-
-    // Concentric rings
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.06)';
-    ctx.lineWidth = 0.5;
-    for (const r of [15, 30, 45]) {
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, tau); ctx.stroke();
-    }
-
-    // Filled polygon
-    ctx.beginPath();
-    for (let i = 0; i < n; i++) {
-      const angle = (i / n) * tau - Math.PI / 2;
-      const r = Math.abs(fpDisplay[i]) * maxR;
-      const x = cx + Math.cos(angle) * r;
-      const y = cy + Math.sin(angle) * r;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(0, 229, 255, 0.12)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-
-    // Spokes
-    for (let i = 0; i < n; i++) {
-      const angle = (i / n) * tau - Math.PI / 2;
-      const v = fpDisplay[i];
-      const r = Math.abs(v) * maxR;
-      const hue = ((i / n) * 270 + 180) % 360;
-      const alpha = 0.3 + Math.abs(v) * 0.5;
-      ctx.strokeStyle = `hsla(${hue}, 70%, 55%, ${alpha})`;
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
-      ctx.stroke();
-    }
-
-    // Centre dot
-    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, 5);
-    glow.addColorStop(0, 'rgba(255, 255, 255, 0.8)');
-    glow.addColorStop(0.4, 'rgba(0, 229, 255, 0.5)');
-    glow.addColorStop(1, 'rgba(0, 229, 255, 0)');
-    ctx.fillStyle = glow;
-    ctx.beginPath(); ctx.arc(cx, cy, 5, 0, tau); ctx.fill();
-
-    // Label
-    if (label) label.textContent = `${n}d  norm ${fpTargetNorm.toFixed(1)}`;
-
-    // Position
-    el.style.display = 'block';
-    el.style.left = `${fpMouseX + 16}px`;
-    el.style.top = `${fpMouseY - 70}px`;
-  }
-
-  // --- Loading state: uses the same radial spoke system with animated synthetic targets ---
-  let fpLoading = false;
-  const FP_LOADING_BANDS = 128; // match typical embedding size
-
-  /** Start showing a loading animation — generates rotating synthetic spokes
-   *  that will smoothly morph into real data once it arrives via setFingerprintTarget. */
-  function renderFingerprintLoading(el: HTMLElement, mx: number, my: number) {
-    fpMouseX = mx;
-    fpMouseY = my;
-    el.style.display = 'block';
-    el.style.left = `${mx + 16}px`;
-    el.style.top = `${my - 70}px`;
-
-    const label = document.getElementById('emb-fingerprint-label') as HTMLElement;
-    if (label) label.textContent = 'loading...';
-
-    // Initialise display buffer if needed
-    if (!fpDisplay || fpDisplay.length !== FP_LOADING_BANDS) {
-      fpDisplay = new Float32Array(FP_LOADING_BANDS);
-      fpTarget = new Float32Array(FP_LOADING_BANDS);
-    }
-    fpNBands = FP_LOADING_BANDS;
-    fpLoading = true;
-    fpVisible = true;
-    if (fpAnimId == null) fpAnimId = requestAnimationFrame(fpAnimate);
-  }
-
-  /** Set new fingerprint target and update mouse position. */
-  function renderFingerprintTooltip(el: HTMLElement, embedding: Float32Array, mx: number, my: number) {
-    fpMouseX = mx;
-    fpMouseY = my;
-    setFingerprintTarget(embedding);
-    // Position immediately even if animation hasn't caught up
-    el.style.display = 'block';
-    el.style.left = `${mx + 16}px`;
-    el.style.top = `${my - 70}px`;
   }
 
   onMount(() => {
@@ -499,19 +309,16 @@
     // Track hovered chunk to avoid redundant updates
     let hoveredChunkKey = '';
     let hoverFadeTimer: ReturnType<typeof setTimeout> | undefined;
-    // Track hovered pixel for explorer fingerprint
+    // Track hovered pixel for the explorer readout
     let hoveredPixelKey = '';
     // Auto-select tile on dwell in explorer mode (zoom >= 12)
     let dwellTimer: ReturnType<typeof setTimeout> | undefined;
     let dwellChunkKey = '';
     const DWELL_MS = 500;
     const DWELL_MIN_ZOOM = 12;
-    // (lastMouseLngLat / lastMouseClient are declared at component scope for $effect access)
 
     // Coordinates display + tile hover highlight
     map.on('mousemove', (e) => {
-      lastMouseLngLat = { lng: e.lngLat.lng, lat: e.lngLat.lat };
-      lastMouseClient = { x: e.originalEvent.clientX, y: e.originalEvent.clientY };
       const coord = document.getElementById('coord-text');
       if (coord) coord.textContent = `${e.lngLat.lng.toFixed(4)}, ${e.lngLat.lat.toFixed(4)}`;
 
@@ -626,16 +433,14 @@
         }
       }
 
-      // Embedding fingerprint tooltip + pixel highlight (explorer mode)
-      const fpEl = document.getElementById('emb-fingerprint');
+      // Per-pixel readout + pixel highlight (explorer mode)
       const pixSrc = map.getSource('pixel-hover') as maplibregl.GeoJSONSource | undefined;
-      if (fpEl) {
+      {
         let shown = false;
         const isExplorer = get(activeTool) === 'explorer';
         const tile = get(explorerTileEmb);
-        const onTile = isExplorer && mgr && hoveredChunkKey && map.getZoom() >= DWELL_MIN_ZOOM;
 
-        // Try to show pixel fingerprint from loaded tile data
+        // Read the pixel under the cursor from loaded tile data
         if (isExplorer && mgr && tile) {
           const src = mgr.getOpenSource(tile.zoneId);
           const px = src?.lngLatToPixel(e.lngLat.lng, e.lngLat.lat);
@@ -646,7 +451,6 @@
                 const off = pixIdx * tile.nBands;
                 if (!isNaN(tile.emb[off])) {
                   const embedding = tile.emb.slice(off, off + tile.nBands);
-                  renderFingerprintTooltip(fpEl, embedding, e.originalEvent.clientX, e.originalEvent.clientY);
                   // Compute per-pixel stats
                   let pxNormSq = 0, dot = 0;
                   for (let b = 0; b < tile.nBands; b++) {
@@ -688,15 +492,7 @@
               }
             }
           }
-        // Show loading spinner in the circle while on a tile but no data yet
-        if (!shown && onTile) {
-          renderFingerprintLoading(fpEl, e.originalEvent.clientX, e.originalEvent.clientY);
-          shown = true;
-        }
-
         if (!shown) {
-          stopFingerprint();
-          fpEl.style.display = 'none';
           explorerPixel.set(null);
           if (hoveredPixelKey && pixSrc) {
             hoveredPixelKey = '';
@@ -761,9 +557,6 @@
       hoveredPixelKey = '';
       clearTimeout(dwellTimer);
       dwellChunkKey = '';
-      stopFingerprint();
-      const fpEl = document.getElementById('emb-fingerprint');
-      if (fpEl) fpEl.style.display = 'none';
       const pixSrc = map.getSource('pixel-hover') as maplibregl.GeoJSONSource | undefined;
       if (pixSrc) pixSrc.setData({ type: 'FeatureCollection', features: [] });
       // Fade opacity to 0 via transitions
@@ -809,6 +602,7 @@
                 years: [],
                 utmBounds: [0, 0, 0, 0],
               });
+              explorerPinned.set({ zoneId: zone.id, ci: chunk.ci, cj: chunk.cj });
             } else {
               explorerHover.set({ zoneId: zone.id, ci: -1, cj: -1, years: [], utmBounds: [0, 0, 0, 0] });
             }
@@ -980,26 +774,6 @@
     }
   });
 
-  // When tile embedding data arrives, re-trigger fingerprint at last mouse position
-  // so the loading wave morphs into the real data without needing mouse movement.
-  $effect(() => {
-    const tile = $explorerTileEmb;
-    if (!tile || !lastMouseLngLat || !lastMouseClient) return;
-    if (get(activeTool) !== 'explorer') return;
-    const mgr = get(sourceManager);
-    if (!mgr) return;
-    const src = mgr.getOpenSource(tile.zoneId);
-    const px = src?.lngLatToPixel(lastMouseLngLat.lng, lastMouseLngLat.lat);
-    if (!px || px.ci !== tile.ci || px.cj !== tile.cj) return;
-    if (px.row < 0 || px.row >= tile.tileH || px.col < 0 || px.col >= tile.tileW) return;
-    const pixIdx = px.row * tile.tileW + px.col;
-    const off = pixIdx * tile.nBands;
-    if (isNaN(tile.emb[off])) return;
-    const embedding = tile.emb.slice(off, off + tile.nBands);
-    const el = document.getElementById('emb-fingerprint');
-    if (el) renderFingerprintTooltip(el, embedding, lastMouseClient.x, lastMouseClient.y);
-  });
-
 </script>
 
 <div bind:this={mapContainer} id="map"></div>
@@ -1023,6 +797,11 @@
 
 <!-- OSM import modal -->
 <OsmImport bind:open={osmModalOpen} autoImport={osmAutoImport} />
+
+<!-- Shard inspector: a floating window over the map, opened by clicking a tile -->
+{#if $activeTool === 'explorer'}
+  <ZarrExplorer />
+{/if}
 
 <!-- Sidebar (bottom sheet on mobile, side panel on desktop) -->
 <div class="fixed bottom-0 left-0 right-0 w-full max-h-[60vh]
@@ -1072,17 +851,4 @@
             border border-gray-700/50 z-50 pointer-events-none
             shadow-lg shadow-black/40 whitespace-nowrap"
      style="display: none">
-</div>
-
-<!-- Embedding fingerprint tooltip (explorer mode, follows mouse) -->
-<div id="emb-fingerprint"
-     class="fixed z-50 pointer-events-none"
-     style="display: none">
-  <canvas id="emb-fingerprint-canvas" width="120" height="120"
-          style="border-radius: 50%; box-shadow: 0 0 16px rgba(0,229,255,0.25), 0 0 4px rgba(0,229,255,0.4); background: rgba(0,2,8,0.55); border: 1px solid rgba(0,229,255,0.25);">
-  </canvas>
-  <div id="emb-fingerprint-label"
-       class="text-center text-[8px] text-gray-500 font-mono mt-1"
-       style="text-shadow: 0 0 4px rgba(0,229,255,0.3);">
-  </div>
 </div>

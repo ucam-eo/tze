@@ -6,7 +6,7 @@ import {
   type StoreMetadata,
 } from '@ucam-eo/tessera';
 import { MaplibreTesseraSource } from './maplibre-source.js';
-import type { MaplibreDisplayOptions, PreviewMode } from './types.js';
+import type { MaplibreDisplayOptions } from './types.js';
 
 /**
  * MapLibre display wrapper around a {@link SourceManager}.
@@ -94,12 +94,6 @@ export class MaplibreTesseraManager {
   setBands(bands: [number, number, number]): void {
     this.displayOpts.bands = bands;
     for (const ds of this.displaySources.values()) ds.setBands(bands);
-  }
-
-  /** Switch the preview rendering mode (rgb | bands) across all zones. */
-  setPreview(mode: PreviewMode): void {
-    this.displayOpts.preview = mode;
-    for (const ds of this.displaySources.values()) ds.setPreview(mode);
   }
 
   /** Set the classification overlay opacity across all zones. */

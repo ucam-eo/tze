@@ -6,26 +6,6 @@ export const WORKER_CODE = `
 self.onmessage = function(e) {
   const msg = e.data;
 
-  if (msg.type === 'render-rgb') {
-    const { rgbData, width, height, id } = msg;
-    const src = new Uint8Array(rgbData);
-    const rgba = new Uint8Array(width * height * 4);
-    let nValid = 0;
-    for (let i = 0; i < width * height; i++) {
-      const si = i * 4;
-      rgba[si]     = src[si];
-      rgba[si + 1] = src[si + 1];
-      rgba[si + 2] = src[si + 2];
-      rgba[si + 3] = src[si + 3];
-      if (src[si + 3] > 0) nValid++;
-    }
-    self.postMessage(
-      { type: 'rgb-result', id, rgba: rgba.buffer, width, height, nValid },
-      [rgba.buffer]
-    );
-    return;
-  }
-
   if (msg.type === 'render-emb') {
     const { embRaw, scalesRaw, width, height, nBands, bands, id } = msg;
     const embInt8 = new Int8Array(embRaw);

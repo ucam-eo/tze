@@ -123,4 +123,17 @@ describe('TesseraSource', () => {
     expect(progressArgs).toHaveLength(1);
     expect(progressArgs[0]).toEqual({ loaded: 1, total: 2, chunk: { ci: 3, cj: 7 } });
   });
+
+  it('depths is empty when the store is not open', () => {
+    const source = new TesseraSource({ url: 'https://example.com/zarr' });
+    expect(source.depths).toEqual([]);
+  });
+
+  it('fetchDepthWindow returns null when the store is not open', async () => {
+    const source = new TesseraSource({ url: 'https://example.com/zarr' });
+    const window = await source.fetchDepthWindow({
+      depth: 4, r0: 0, c0: 0, height: 8, width: 8,
+    });
+    expect(window).toBeNull();
+  });
 });

@@ -4,7 +4,7 @@ import { MaplibreTesseraManager, clearZarrProtocolCache } from '@ucam-eo/maplibr
 import type { ZoneDescriptor } from '../lib/stac';
 import { pointInBbox, loadStore } from '../lib/stac';
 import { mapInstance } from './map';
-import { sourceManager, displayManager, metadata, bands, opacity, preview, loading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
+import { sourceManager, displayManager, metadata, bands, opacity, reportLoading, clearLoading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
 import { clearAllRegions } from './drawing';
 import { simSelectedPixel, simScores, simRefEmbedding } from './similarity';
 import { labels, isClassified } from './classifier';
@@ -22,10 +22,12 @@ export interface DatasetVersion {
 export const DATASET_VERSIONS: DatasetVersion[] = [
   { id: 'v1.0', label: 'v1.0', sublabel: 'global',
     url: 'https://data.source.coop/tessera/tessera/zarr/v1' },
-  // Still served from S3 while the source.coop copy is being processed; it will
-  // move to `https://data.source.coop/tessera/tessera/zarr/v1.1-cam` once ready.
-  { id: 'v1.1', label: 'v1.1', sublabel: 'Cambridge',
-    url: 'https://tessera-embeddings.s3.us-west-2.amazonaws.com/v1.1/cambridge.zarr' },
+  { id: 'v1.1', label: 'v1.1', sublabel: 'global',
+    url: 'https://data.source.coop/tessera/tessera/zarr/v1.1' },
+  // v2-2B-L~beta1 — the 2B-parameter model preview. Shortened to "v2b1" in the
+  // UI and in `?store=`; the full release name stays in the URL.
+  { id: 'v2b1', label: 'v2b1', sublabel: 'global · beta',
+    url: 'https://data.source.coop/tessera/tessera/zarr/v2-2B-L~beta1' },
 ];
 
 /** Query-string key carrying the active dataset, so the page URL is shareable.
@@ -114,6 +116,7 @@ export async function loadCatalog(url: string): Promise<void> {
   status.set('Loading catalog...');
 
   // A dataset change invalidates all embedding-specific analysis state.
+  clearLoading();
   clearAllRegions();
   simSelectedPixel.set(null);
   simRefEmbedding.set(null);
@@ -165,7 +168,6 @@ export async function initManager(initialZoneId?: string): Promise<void> {
     const dm = new MaplibreTesseraManager(sm, {
       bands: get(bands),
       opacity: get(opacity),
-      preview: get(preview),
       globalPreviewUrl: get(globalPreviewUrl),
       globalPreviewBounds: get(globalPreviewBounds) ?? undefined,
       maxCached: mobile ? 4 : undefined,
@@ -175,7 +177,7 @@ export async function initManager(initialZoneId?: string): Promise<void> {
       metadata.set(meta);
       status.set(`Loaded: zone ${meta.utmZone}`);
     });
-    sm.on('loading', (p) => loading.set(p));
+    sm.on('loading', reportLoading);
     sm.on('error', (err) => status.set(`Error: ${err.message}`));
 
     await dm.addTo(map);
@@ -204,6 +206,7 @@ export async function switchYear(year: string): Promise<void> {
   activeYear.set(year);
 
   // Clear analysis state — embeddings are year-specific
+  clearLoading();
   clearAllRegions();
   simSelectedPixel.set(null);
   simRefEmbedding.set(null);
@@ -239,7 +242,6 @@ export async function switchYear(year: string): Promise<void> {
     const dm = new MaplibreTesseraManager(sm, {
       bands: get(bands),
       opacity: get(opacity),
-      preview: get(preview),
       globalPreviewUrl: get(globalPreviewUrl),
       globalPreviewBounds: get(globalPreviewBounds) ?? undefined,
       maxCached: mobile ? 4 : undefined,
@@ -249,7 +251,7 @@ export async function switchYear(year: string): Promise<void> {
       metadata.set(meta);
       status.set(`Loaded: zone ${meta.utmZone}`);
     });
-    sm.on('loading', (p) => loading.set(p));
+    sm.on('loading', reportLoading);
     sm.on('error', (err) => status.set(`Error: ${err.message}`));
 
     // The zarr:// protocol serves only the year-independent global RGB preview,

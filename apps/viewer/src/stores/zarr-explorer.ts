@@ -14,6 +14,19 @@ export const explorerTileEmb = writable<{
   tileMeanNorm: number;
 } | null>(null);
 
+/**
+ * The shard the user explicitly clicked, which the inspector window pins to.
+ *
+ * Distinct from {@link explorerHover}: that follows hover-dwell as well as
+ * clicks, so it changes while panning. The window must not, since opening it
+ * loads every embedding depth for the shard.
+ */
+export const explorerPinned = writable<{
+  zoneId: string;
+  ci: number;
+  cj: number;
+} | null>(null);
+
 export const explorerHover = writable<{
   zoneId: string;
   ci: number;

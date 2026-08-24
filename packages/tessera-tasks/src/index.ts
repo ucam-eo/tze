@@ -13,6 +13,23 @@ export {
   type SimilarityResult,
 } from './similarity.js';
 
+export {
+  meanEmbedding,
+  devianceMap,
+  similarityMap,
+  pearson,
+  topKOverlap,
+  prefixMaxDiff,
+  meanAbsDiff,
+  blockNormMap,
+  bandRanges,
+  scalarRange,
+  rgbaFromBands,
+  rgbaFromScalar,
+  type BandRange,
+  type DepthBuffer,
+} from './depth-compare.js';
+
 // Re-export only types from heavy modules so they can be used without
 // pulling in TensorFlow.js or ONNX Runtime at runtime.
 export type {

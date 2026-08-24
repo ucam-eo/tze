@@ -12,6 +12,7 @@
  *   });
  */
 import * as zarr from 'zarrita';
+import { withRangeCoalescing, withRequestCoalescing, withRetry } from '@ucam-eo/tessera';
 
 function abortError(): DOMException {
   return new DOMException('Tile request aborted', 'AbortError');
@@ -35,10 +36,12 @@ async function openPyramid(storeUrl: string, variable: string): Promise<CachedPy
   // poison the cached handle. Per-tile signals go to `zarr.get` instead.
   const store = await zarr.extendStore(
     new zarr.FetchStore(storeUrl),
-    zarr.withRangeCoalescing,
+    withRetry,
+    withRequestCoalescing,
+    withRangeCoalescing,
   );
   const rootLoc = zarr.root(store);
-  const group = await zarr.open(rootLoc, { kind: 'group' });
+  const group = await zarr.open.v3(rootLoc, { kind: 'group' });
   const attrs = group.attrs as Record<string, unknown>;
 
   const ms = attrs.multiscales as { layout: { asset: string }[] } | undefined;
@@ -49,7 +52,7 @@ async function openPyramid(storeUrl: string, variable: string): Promise<CachedPy
   const levels: PyramidLevel[] = [];
   for (const entry of ms.layout) {
     const path = `${entry.asset}/${variable}`;
-    const arr = await zarr.open(rootLoc.resolve(path), { kind: 'array' });
+    const arr = await zarr.open.v3(rootLoc.resolve(path), { kind: 'array' });
     levels.push({ arr, shape: arr.shape as [number, number, number] });
   }
   return { levels };
@@ -59,7 +62,12 @@ function getOrOpenPyramid(storeUrl: string, variable: string): Promise<CachedPyr
   const key = `${storeUrl}/${variable}`;
   let p = pyramidCache.get(key);
   if (!p) {
-    p = openPyramid(storeUrl, variable);
+    // Evict on failure: a cached rejection would break every later tile for
+    // the lifetime of the page, turning one transient error into a dead layer.
+    p = openPyramid(storeUrl, variable).catch((err) => {
+      if (pyramidCache.get(key) === p) pyramidCache.delete(key);
+      throw err;
+    });
     pyramidCache.set(key, p);
   }
   return p;

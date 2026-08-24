@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { sourceManager } from '../stores/zarr';
-  import { explorerHover, explorerTileEmb, explorerPixel, YEAR_COLORS } from '../stores/zarr-explorer';
+  import { sourceManager, metadata } from '../stores/zarr';
+  import { explorerPinned, explorerTileEmb, explorerPixel, YEAR_COLORS } from '../stores/zarr-explorer';
+  import FloatingWindow from './FloatingWindow.svelte';
+  import MatryoshkaPanel from './MatryoshkaPanel.svelte';
   import { get } from 'svelte/store';
 
   // --- Animated fingerprint canvas ---
@@ -200,7 +202,7 @@
 
   /** Fetch tile embeddings + compute stats using library API (no internal access). */
   async function computeTileStats() {
-    const hover = get(explorerHover);
+    const hover = get(explorerPinned);
     if (!hover || hover.ci < 0) { tileStats = null; return; }
     const mgr = get(sourceManager);
     if (!mgr) { tileStats = null; return; }
@@ -242,7 +244,7 @@
   }
 
   async function fetchTemporalData() {
-    const hover = get(explorerHover);
+    const hover = get(explorerPinned);
     if (!hover || hover.ci < 0) return;
     const myGen = ++temporalGen;
     temporalLoading = true;
@@ -269,7 +271,7 @@
   }
 
   async function probeSelectedShard() {
-    const hover = get(explorerHover);
+    const hover = get(explorerPinned);
     if (!hover) return;
     const myProbeGen = ++probeGen;
     probing = true;
@@ -307,7 +309,7 @@
   let probeTimer: ReturnType<typeof setTimeout> | undefined;
 
   $effect(() => {
-    const hover = $explorerHover;
+    const hover = $explorerPinned;
     clearTimeout(probeTimer);
     probeResults = new Map();
     probeGen++;
@@ -330,7 +332,9 @@
     return () => clearTimeout(probeTimer);
   });
 
-  const selected = $derived($explorerHover);
+  const selected = $derived($explorerPinned);
+  /** Depth comparison earns a second column; without it the window stays narrow. */
+  const hasDepths = $derived(($metadata?.geoemb_depths?.length ?? 0) > 1);
 
   /** Pretty-print a URL: show just the hostname + last path segment. */
   function shortUrl(url: string): string {
@@ -343,252 +347,261 @@
 
 </script>
 
-<div class="space-y-3" data-tutorial="explorer-panel">
-  {#if !selected}
-    <div class="text-[10px] text-gray-500">
-      Click on the map to inspect a shard.
-    </div>
-  {/if}
-
-  <!-- Selected shard info -->
-  {#if selected}
-    {@const mgr = $sourceManager}
-    {@const src = mgr?.getOpenSource(selected.zoneId)}
-    {@const meta = src?.metadata}
-    <div class="bg-gray-900/80 border border-term-cyan/30 rounded px-2.5 py-2 space-y-1.5">
-      <div class="text-[10px] text-gray-300 font-medium">
-        {selected.zoneId}
-        <span class="text-gray-500 font-normal">shard [{selected.ci}, {selected.cj}]</span>
-      </div>
-      {#if $explorerPixel}
-        {@const px = $explorerPixel}
-        {@const cos = px.cosineVsTile}
-        {@const cosHue = cos > 0.95 ? 120 : cos > 0.8 ? 60 : 0}
-        <div class="text-[9px] text-term-cyan/70 tabular-nums">
-          {px.lng.toFixed(6)}, {px.lat.toFixed(6)}
-          <span class="text-gray-600 ml-1">px [{px.row}, {px.col}]</span>
+<FloatingWindow
+  open={!!selected}
+  title={selected ? `${selected.zoneId} shard [${selected.ci}, ${selected.cj}]` : ''}
+  subtitle={$metadata?.geoemb_modelName}
+  width={hasDepths ? 700 : 360}
+  onclose={() => explorerPinned.set(null)}
+>
+  <div class="flex items-start gap-3" data-tutorial="explorer-panel">
+    <div class="flex-1 min-w-0 space-y-3">
+    {#if selected}
+      {@const mgr = $sourceManager}
+      {@const src = mgr?.getOpenSource(selected.zoneId)}
+      {@const meta = src?.metadata}
+      <div class="bg-gray-900/80 border border-term-cyan/30 rounded px-2.5 py-2 space-y-1.5">
+        <div class="text-[10px] text-gray-300 font-medium">
+          {selected.zoneId}
+          <span class="text-gray-500 font-normal">shard [{selected.ci}, {selected.cj}]</span>
         </div>
-        <div class="flex items-center gap-2 text-[9px]">
-          <span class="text-gray-500">norm</span>
-          <span class="text-gray-400 tabular-nums">{px.norm.toFixed(2)}</span>
-          <span class="text-gray-500">vs tile</span>
-          <span class="tabular-nums" style="color: hsl({cosHue}, 70%, 55%)">{cos.toFixed(3)}</span>
-          {#if cos < 0.8}
-            <span class="text-red-400/60 text-[8px]">outlier</span>
-          {:else if cos < 0.95}
-            <span class="text-yellow-400/60 text-[8px]">deviant</span>
-          {/if}
-        </div>
-      {/if}
-      {#if meta}
-        {@const px = meta.transform[0]}
-        {@const originE = meta.transform[2]}
-        {@const originN = meta.transform[5]}
-        {@const chunkE = originE + selected.cj * meta.chunkShape[1] * px}
-        {@const chunkN = originN - selected.ci * meta.chunkShape[0] * px}
-        {@const chunkW = meta.chunkShape[1] * px}
-        {@const chunkH = meta.chunkShape[0] * px}
-        <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
-          <span class="text-gray-500">CRS</span>
-          <span class="text-gray-400">EPSG:{meta.epsg}</span>
-          <span class="text-gray-500">Pixel</span>
-          <span class="text-gray-400">{px}m, {meta.nBands} bands</span>
-          <span class="text-gray-500">Shard</span>
-          <span class="text-gray-400">{meta.chunkShape[1]}x{meta.chunkShape[0]} px ({(chunkW/1000).toFixed(1)}x{(chunkH/1000).toFixed(1)} km)</span>
-          <span class="text-gray-500">UTM NW</span>
-          <span class="text-gray-400 tabular-nums">{chunkE.toFixed(0)}, {chunkN.toFixed(0)}</span>
-          <span class="text-gray-500">UTM SE</span>
-          <span class="text-gray-400 tabular-nums">{(chunkE + chunkW).toFixed(0)}, {(chunkN - chunkH).toFixed(0)}</span>
-          {#if src?.projection}
-            {@const nw = src.projection.inverse(chunkE, chunkN)}
-            {@const se = src.projection.inverse(chunkE + chunkW, chunkN - chunkH)}
-            <span class="text-gray-500">Lon/Lat NW</span>
-            <span class="text-gray-400 tabular-nums">{nw[0].toFixed(4)}, {nw[1].toFixed(4)}</span>
-            <span class="text-gray-500">Lon/Lat SE</span>
-            <span class="text-gray-400 tabular-nums">{se[0].toFixed(4)}, {se[1].toFixed(4)}</span>
-          {/if}
-          {#if meta.years && meta.years.length > 0}
-            {@const latestT = meta.years.length - 1}
-            {@const baseUrl = meta.url}
-            <span class="text-gray-500">Shard URL</span>
-            <span class="text-gray-400 text-[8px] break-all">
-              <a href="{baseUrl}/embeddings/c/{latestT}/{selected.ci}/{selected.cj}"
-                 target="_blank" class="text-term-cyan/60 hover:text-term-cyan underline">
-                c/{latestT}/{selected.ci}/{selected.cj}
-              </a>
-            </span>
-          {/if}
-        </div>
-
-        <!-- Provenance (geoemb: convention) — compact -->
-        {#if meta.geoemb_model || meta.geoemb_dataType}
-          <div class="border-t border-gray-800/40 pt-1.5">
-            <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
-              {#if meta.geoemb_model}
-                <span class="text-gray-500">Model</span>
-                <a href={meta.geoemb_model} target="_blank"
-                   class="text-term-cyan/60 hover:text-term-cyan">{meta.geoemb_modelName ?? meta.geoemb_model}</a>
-              {/if}
-              {#if meta.geoemb_dataType}
-                <span class="text-gray-500">Type</span>
-                <span class="text-gray-400">{meta.geoemb_dataType}{meta.geoemb_quantMethod ? ` / ${meta.geoemb_quantMethod}` : ''}</span>
-              {/if}
-              {#if meta.geoemb_buildVersion}
-                <span class="text-gray-500">Build</span>
-                <span class="text-gray-400">{meta.geoemb_buildVersion}</span>
-              {/if}
-              {#if meta.geoemb_sourceData}
-                <span class="text-gray-500">Source</span>
-                <span class="text-gray-400">
-                  {#if Array.isArray(meta.geoemb_sourceData)}
-                    {#each meta.geoemb_sourceData as url, i}
-                      <a href={url} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">[{i + 1}]</a>{' '}
-                    {/each}
-                  {:else}
-                    <a href={meta.geoemb_sourceData} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">[1]</a>
-                  {/if}
-                </span>
-              {/if}
-            </div>
+        {#if $explorerPixel && $explorerPixel.ci === selected.ci && $explorerPixel.cj === selected.cj}
+          {@const px = $explorerPixel}
+          {@const cos = px.cosineVsTile}
+          {@const cosHue = cos > 0.95 ? 120 : cos > 0.8 ? 60 : 0}
+          <div class="text-[9px] text-term-cyan/70 tabular-nums">
+            {px.lng.toFixed(6)}, {px.lat.toFixed(6)}
+            <span class="text-gray-600 ml-1">px [{px.row}, {px.col}]</span>
+          </div>
+          <div class="flex items-center gap-2 text-[9px]">
+            <span class="text-gray-500">norm</span>
+            <span class="text-gray-400 tabular-nums">{px.norm.toFixed(2)}</span>
+            <span class="text-gray-500">vs tile</span>
+            <span class="tabular-nums" style="color: hsl({cosHue}, 70%, 55%)">{cos.toFixed(3)}</span>
+            {#if cos < 0.8}
+              <span class="text-red-400/60 text-[8px]">outlier</span>
+            {:else if cos < 0.95}
+              <span class="text-yellow-400/60 text-[8px]">deviant</span>
+            {/if}
           </div>
         {/if}
-
-        <!-- Per-tile stats + embedding fingerprint -->
-        {#if tileStats}
-          <div class="border-t border-gray-800/40 pt-1.5 space-y-1">
-            <div class="text-[9px] text-gray-500 uppercase tracking-wider">Tile Stats</div>
-            <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
-              <span class="text-gray-500">Valid pixels</span>
-              <span class="text-gray-400">{tileStats.validPixels.toLocaleString()}/{tileStats.totalPixels.toLocaleString()} ({(tileStats.validPixels / tileStats.totalPixels * 100).toFixed(0)}%)</span>
-              <span class="text-gray-500">Norm range</span>
-              <span class="text-gray-400 tabular-nums">{tileStats.minNorm.toFixed(1)} – {tileStats.maxNorm.toFixed(1)}</span>
-              <span class="text-gray-500">Mean norm</span>
-              <span class="text-gray-400 tabular-nums">{tileStats.meanNorm.toFixed(2)}</span>
-              <span class="text-gray-500">Variance</span>
-              <span class="text-gray-400 tabular-nums">{tileStats.variance.toFixed(1)}</span>
-            </div>
-
-            <!-- Animated fingerprint: tile mean + pixel overlay with morphing + sinusoidal waves -->
-            <div class="text-[8px] text-gray-600 mt-1">
-              {$explorerPixel ? 'Pixel vs tile' : 'Tile fingerprint'}
-            </div>
-            <canvas bind:this={fpCanvasEl} width="256" height="48"
-                    class="w-full h-10 rounded" style="image-rendering: auto;"></canvas>
-          </div>
-        {:else if tileStatsLoading}
-          <div class="text-[9px] text-gray-600 italic border-t border-gray-800/40 pt-1.5">
-            <span class="inline-block w-2 h-2 border border-gray-500 border-t-term-cyan rounded-full animate-spin mr-1"></span>
-            Fetching tile embeddings...
-          </div>
-        {/if}
-      {:else}
-        <div class="text-[9px] text-gray-500">Loading zone metadata...</div>
-      {/if}
-
-      <!-- Year availability bar -->
-      {#if probeResults.size > 0}
-        {@const sorted = [...probeResults.entries()].sort((a, b) => a[0] - b[0])}
-        {@const found = sorted.filter(([,s]) => s === 'found').length}
-        {@const pending = sorted.some(([,s]) => s === 'pending')}
-        <div class="flex items-center gap-1.5 text-[9px]">
-          <span class="text-gray-500 shrink-0">Years</span>
-          <div class="flex flex-1 h-3.5 rounded overflow-hidden border border-gray-700/40">
-            {#each sorted as [year, status]}
-              {@const color = YEAR_COLORS[year] ?? '#888'}
-              <div class="flex-1 flex items-center justify-center text-[7px] font-mono leading-none"
-                   style="background: {status === 'found' ? color + '44' : 'transparent'};
-                          color: {status === 'found' ? color : '#444'}"
-                   title="{year}: {status}"
-              >{String(year).slice(2)}</div>
-            {/each}
-          </div>
-          <span class="text-gray-600 shrink-0 tabular-nums">{pending ? '...' : `${found}/${sorted.length}`}</span>
-        </div>
-      {:else if selected && selected.ci >= 0}
-        <div class="text-[9px] text-gray-600 italic">Checking years...</div>
-      {/if}
-
-      <!-- Temporal analysis -->
-      {#if selected && selected.ci >= 0}
-        {#if temporalData.length > 1}
-          {@const maxNorm = Math.max(...temporalData.map(d => d.norm))}
-          {@const minNorm = Math.min(...temporalData.map(d => d.norm))}
-          {@const normRange = maxNorm - minNorm || 1}
-          {@const cosines = temporalData.slice(1).map((d, i) => {
-            const prev = temporalData[i].embedding;
-            const curr = d.embedding;
-            let dot = 0, n1 = 0, n2 = 0;
-            for (let b = 0; b < prev.length; b++) {
-              dot += prev[b] * curr[b];
-              n1 += prev[b] * prev[b];
-              n2 += curr[b] * curr[b];
-            }
-            return dot / (Math.sqrt(n1) * Math.sqrt(n2) || 1);
-          })}
-          <div class="border-t border-gray-800/40 pt-1.5 space-y-1">
-            <div class="text-[9px] text-gray-500 uppercase tracking-wider">Temporal</div>
-            <!-- Norm sparkline -->
-            <div class="text-[8px] text-gray-600">Embedding norm</div>
-            <svg viewBox="0 0 200 40" class="w-full h-8">
-              {#each temporalData as d, i}
-                {@const x = (i / (temporalData.length - 1)) * 180 + 10}
-                {@const y = 35 - ((d.norm - minNorm) / normRange) * 30}
-                {@const color = YEAR_COLORS[d.year] ?? '#888'}
-                <circle cx={x} cy={y} r="3" fill={color} opacity="0.9" />
-                {#if i > 0}
-                  {@const px = ((i - 1) / (temporalData.length - 1)) * 180 + 10}
-                  {@const py = 35 - ((temporalData[i-1].norm - minNorm) / normRange) * 30}
-                  <line x1={px} y1={py} x2={x} y2={y} stroke={color} stroke-width="1.5" opacity="0.5" />
-                {/if}
-                <text x={x} y="38" text-anchor="middle" fill="#666" font-size="5">{String(d.year).slice(2)}</text>
-              {/each}
-            </svg>
-            <div class="flex justify-between text-[8px] text-gray-600 tabular-nums">
-              <span>{minNorm.toFixed(1)}</span>
-              <span>{maxNorm.toFixed(1)}</span>
-            </div>
-
-            <!-- Cosine similarity between consecutive years -->
-            <div class="text-[8px] text-gray-600 mt-1 flex items-center gap-1">
-              Year-to-year similarity
-              <span class="relative group cursor-help">
-                <span class="inline-flex items-center justify-center w-3 h-3 rounded-full border border-gray-600 text-[6px] text-gray-500">?</span>
-                <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 w-44 p-1.5 bg-gray-900 border border-gray-700 rounded text-[8px] text-gray-400 leading-snug hidden group-hover:block z-50 shadow-lg">
-                  Cosine similarity measures how similar two embedding vectors are regardless of magnitude.
-                  <strong class="text-gray-300">1.0</strong> = identical direction,
-                  <strong class="text-green-400">&gt;0.95</strong> = stable (green),
-                  <strong class="text-yellow-400">&gt;0.80</strong> = moderate change (yellow),
-                  <strong class="text-red-400">&lt;0.80</strong> = significant change (red) — likely land cover change.
-                </span>
+        {#if meta}
+          {@const px = meta.transform[0]}
+          {@const originE = meta.transform[2]}
+          {@const originN = meta.transform[5]}
+          {@const chunkE = originE + selected.cj * meta.chunkShape[1] * px}
+          {@const chunkN = originN - selected.ci * meta.chunkShape[0] * px}
+          {@const chunkW = meta.chunkShape[1] * px}
+          {@const chunkH = meta.chunkShape[0] * px}
+          <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
+            <span class="text-gray-500">CRS</span>
+            <span class="text-gray-400">EPSG:{meta.epsg}</span>
+            <span class="text-gray-500">Pixel</span>
+            <span class="text-gray-400">{px}m, {meta.nBands} bands</span>
+            <span class="text-gray-500">Shard</span>
+            <span class="text-gray-400">{meta.chunkShape[1]}x{meta.chunkShape[0]} px ({(chunkW/1000).toFixed(1)}x{(chunkH/1000).toFixed(1)} km)</span>
+            <span class="text-gray-500">UTM NW</span>
+            <span class="text-gray-400 tabular-nums">{chunkE.toFixed(0)}, {chunkN.toFixed(0)}</span>
+            <span class="text-gray-500">UTM SE</span>
+            <span class="text-gray-400 tabular-nums">{(chunkE + chunkW).toFixed(0)}, {(chunkN - chunkH).toFixed(0)}</span>
+            {#if src?.projection}
+              {@const nw = src.projection.inverse(chunkE, chunkN)}
+              {@const se = src.projection.inverse(chunkE + chunkW, chunkN - chunkH)}
+              <span class="text-gray-500">Lon/Lat NW</span>
+              <span class="text-gray-400 tabular-nums">{nw[0].toFixed(4)}, {nw[1].toFixed(4)}</span>
+              <span class="text-gray-500">Lon/Lat SE</span>
+              <span class="text-gray-400 tabular-nums">{se[0].toFixed(4)}, {se[1].toFixed(4)}</span>
+            {/if}
+            {#if meta.years && meta.years.length > 0}
+              {@const latestT = meta.years.length - 1}
+              {@const baseUrl = meta.url}
+              <span class="text-gray-500">Shard URL</span>
+              <span class="text-gray-400 text-[8px] break-all">
+                <a href="{baseUrl}/embeddings/c/{latestT}/{selected.ci}/{selected.cj}"
+                   target="_blank" class="text-term-cyan/60 hover:text-term-cyan underline">
+                  c/{latestT}/{selected.ci}/{selected.cj}
+                </a>
               </span>
+            {/if}
+          </div>
+
+          <!-- Provenance (geoemb: convention) — compact -->
+          {#if meta.geoemb_model || meta.geoemb_dataType}
+            <div class="border-t border-gray-800/40 pt-1.5">
+              <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
+                {#if meta.geoemb_model}
+                  <span class="text-gray-500">Model</span>
+                  <a href={meta.geoemb_model} target="_blank"
+                     class="text-term-cyan/60 hover:text-term-cyan">{meta.geoemb_modelName ?? meta.geoemb_model}</a>
+                {/if}
+                {#if meta.geoemb_dataType}
+                  <span class="text-gray-500">Type</span>
+                  <span class="text-gray-400">{meta.geoemb_dataType}{meta.geoemb_quantMethod ? ` / ${meta.geoemb_quantMethod}` : ''}</span>
+                {/if}
+                {#if meta.geoemb_buildVersion}
+                  <span class="text-gray-500">Build</span>
+                  <span class="text-gray-400">{meta.geoemb_buildVersion}</span>
+                {/if}
+                {#if meta.geoemb_sourceData}
+                  <span class="text-gray-500">Source</span>
+                  <span class="text-gray-400">
+                    {#if Array.isArray(meta.geoemb_sourceData)}
+                      {#each meta.geoemb_sourceData as url, i}
+                        <a href={url} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">[{i + 1}]</a>{' '}
+                      {/each}
+                    {:else}
+                      <a href={meta.geoemb_sourceData} target="_blank" class="text-term-cyan/60 hover:text-term-cyan">[1]</a>
+                    {/if}
+                  </span>
+                {/if}
+              </div>
             </div>
-            <svg viewBox="0 0 200 30" class="w-full h-6">
-              {#each cosines as cos, i}
-                {@const x = ((i + 0.5) / cosines.length) * 180 + 10}
-                {@const barH = Math.max(1, cos * 25)}
-                {@const hue = cos > 0.95 ? 120 : cos > 0.8 ? 60 : 0}
-                <rect x={x - 6} y={25 - barH} width="12" height={barH}
-                      fill="hsl({hue}, 70%, 50%)" opacity="0.7" rx="1" />
-                <text x={x} y="29" text-anchor="middle" fill="#666" font-size="4.5">
-                  {cos.toFixed(2)}
-                </text>
-              {/each}
-            </svg>
-          </div>
-        {:else if temporalLoading}
-          <div class="text-[9px] text-gray-600 italic border-t border-gray-800/40 pt-1.5">
-            Loading temporal data...
-          </div>
-        {:else if temporalData.length === 0 && !temporalLoading}
-          <button
-            onclick={fetchTemporalData}
-            class="w-full text-[9px] text-gray-500 hover:text-term-cyan border border-gray-700/60
-                   hover:border-term-cyan/40 px-2 py-1.5 rounded transition-all mt-1"
-          >
-            Compare across years
-          </button>
+          {/if}
+
+          <!-- Per-tile stats + embedding fingerprint -->
+          {#if tileStats}
+            <div class="border-t border-gray-800/40 pt-1.5 space-y-1">
+              <div class="text-[9px] text-gray-500 uppercase tracking-wider">Tile Stats</div>
+              <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px]">
+                <span class="text-gray-500">Valid pixels</span>
+                <span class="text-gray-400">{tileStats.validPixels.toLocaleString()}/{tileStats.totalPixels.toLocaleString()} ({(tileStats.validPixels / tileStats.totalPixels * 100).toFixed(0)}%)</span>
+                <span class="text-gray-500">Norm range</span>
+                <span class="text-gray-400 tabular-nums">{tileStats.minNorm.toFixed(1)} – {tileStats.maxNorm.toFixed(1)}</span>
+                <span class="text-gray-500">Mean norm</span>
+                <span class="text-gray-400 tabular-nums">{tileStats.meanNorm.toFixed(2)}</span>
+                <span class="text-gray-500">Variance</span>
+                <span class="text-gray-400 tabular-nums">{tileStats.variance.toFixed(1)}</span>
+              </div>
+
+              <!-- Animated fingerprint: tile mean + pixel overlay with morphing + sinusoidal waves -->
+              <div class="text-[8px] text-gray-600 mt-1">
+                {$explorerPixel ? 'Pixel vs tile' : 'Tile fingerprint'}
+              </div>
+              <canvas bind:this={fpCanvasEl} width="256" height="48"
+                      class="w-full h-10 rounded" style="image-rendering: auto;"></canvas>
+            </div>
+          {:else if tileStatsLoading}
+            <div class="text-[9px] text-gray-600 italic border-t border-gray-800/40 pt-1.5">
+              <span class="inline-block w-2 h-2 border border-gray-500 border-t-term-cyan rounded-full animate-spin mr-1"></span>
+              Fetching tile embeddings...
+            </div>
+          {/if}
+        {:else}
+          <div class="text-[9px] text-gray-500">Loading zone metadata...</div>
         {/if}
-      {/if}
+
+        <!-- Year availability bar -->
+        {#if probeResults.size > 0}
+          {@const sorted = [...probeResults.entries()].sort((a, b) => a[0] - b[0])}
+          {@const found = sorted.filter(([,s]) => s === 'found').length}
+          {@const pending = sorted.some(([,s]) => s === 'pending')}
+          <div class="flex items-center gap-1.5 text-[9px]">
+            <span class="text-gray-500 shrink-0">Years</span>
+            <div class="flex flex-1 h-3.5 rounded overflow-hidden border border-gray-700/40">
+              {#each sorted as [year, status]}
+                {@const color = YEAR_COLORS[year] ?? '#888'}
+                <div class="flex-1 flex items-center justify-center text-[7px] font-mono leading-none"
+                     style="background: {status === 'found' ? color + '44' : 'transparent'};
+                            color: {status === 'found' ? color : '#444'}"
+                     title="{year}: {status}"
+                >{String(year).slice(2)}</div>
+              {/each}
+            </div>
+            <span class="text-gray-600 shrink-0 tabular-nums">{pending ? '...' : `${found}/${sorted.length}`}</span>
+          </div>
+        {:else if selected && selected.ci >= 0}
+          <div class="text-[9px] text-gray-600 italic">Checking years...</div>
+        {/if}
+
+        <!-- Temporal analysis -->
+        {#if selected && selected.ci >= 0}
+          {#if temporalData.length > 1}
+            {@const maxNorm = Math.max(...temporalData.map(d => d.norm))}
+            {@const minNorm = Math.min(...temporalData.map(d => d.norm))}
+            {@const normRange = maxNorm - minNorm || 1}
+            {@const cosines = temporalData.slice(1).map((d, i) => {
+              const prev = temporalData[i].embedding;
+              const curr = d.embedding;
+              let dot = 0, n1 = 0, n2 = 0;
+              for (let b = 0; b < prev.length; b++) {
+                dot += prev[b] * curr[b];
+                n1 += prev[b] * prev[b];
+                n2 += curr[b] * curr[b];
+              }
+              return dot / (Math.sqrt(n1) * Math.sqrt(n2) || 1);
+            })}
+            <div class="border-t border-gray-800/40 pt-1.5 space-y-1">
+              <div class="text-[9px] text-gray-500 uppercase tracking-wider">Temporal</div>
+              <!-- Norm sparkline -->
+              <div class="text-[8px] text-gray-600">Embedding norm</div>
+              <svg viewBox="0 0 200 40" class="w-full h-8">
+                {#each temporalData as d, i}
+                  {@const x = (i / (temporalData.length - 1)) * 180 + 10}
+                  {@const y = 35 - ((d.norm - minNorm) / normRange) * 30}
+                  {@const color = YEAR_COLORS[d.year] ?? '#888'}
+                  <circle cx={x} cy={y} r="3" fill={color} opacity="0.9" />
+                  {#if i > 0}
+                    {@const px = ((i - 1) / (temporalData.length - 1)) * 180 + 10}
+                    {@const py = 35 - ((temporalData[i-1].norm - minNorm) / normRange) * 30}
+                    <line x1={px} y1={py} x2={x} y2={y} stroke={color} stroke-width="1.5" opacity="0.5" />
+                  {/if}
+                  <text x={x} y="38" text-anchor="middle" fill="#666" font-size="5">{String(d.year).slice(2)}</text>
+                {/each}
+              </svg>
+              <div class="flex justify-between text-[8px] text-gray-600 tabular-nums">
+                <span>{minNorm.toFixed(1)}</span>
+                <span>{maxNorm.toFixed(1)}</span>
+              </div>
+
+              <!-- Cosine similarity between consecutive years -->
+              <div class="text-[8px] text-gray-600 mt-1 flex items-center gap-1">
+                Year-to-year similarity
+                <span class="relative group cursor-help">
+                  <span class="inline-flex items-center justify-center w-3 h-3 rounded-full border border-gray-600 text-[6px] text-gray-500">?</span>
+                  <span class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 w-44 p-1.5 bg-gray-900 border border-gray-700 rounded text-[8px] text-gray-400 leading-snug hidden group-hover:block z-50 shadow-lg">
+                    Cosine similarity measures how similar two embedding vectors are regardless of magnitude.
+                    <strong class="text-gray-300">1.0</strong> = identical direction,
+                    <strong class="text-green-400">&gt;0.95</strong> = stable (green),
+                    <strong class="text-yellow-400">&gt;0.80</strong> = moderate change (yellow),
+                    <strong class="text-red-400">&lt;0.80</strong> = significant change (red) — likely land cover change.
+                  </span>
+                </span>
+              </div>
+              <svg viewBox="0 0 200 30" class="w-full h-6">
+                {#each cosines as cos, i}
+                  {@const x = ((i + 0.5) / cosines.length) * 180 + 10}
+                  {@const barH = Math.max(1, cos * 25)}
+                  {@const hue = cos > 0.95 ? 120 : cos > 0.8 ? 60 : 0}
+                  <rect x={x - 6} y={25 - barH} width="12" height={barH}
+                        fill="hsl({hue}, 70%, 50%)" opacity="0.7" rx="1" />
+                  <text x={x} y="29" text-anchor="middle" fill="#666" font-size="4.5">
+                    {cos.toFixed(2)}
+                  </text>
+                {/each}
+              </svg>
+            </div>
+          {:else if temporalLoading}
+            <div class="text-[9px] text-gray-600 italic border-t border-gray-800/40 pt-1.5">
+              Loading temporal data...
+            </div>
+          {:else if temporalData.length === 0 && !temporalLoading}
+            <button
+              onclick={fetchTemporalData}
+              class="w-full text-[9px] text-gray-500 hover:text-term-cyan border border-gray-700/60
+                     hover:border-term-cyan/40 px-2 py-1.5 rounded transition-all mt-1"
+            >
+              Compare across years
+            </button>
+          {/if}
+        {/if}
+      </div>
+    {/if}
     </div>
-  {/if}
-</div>
+
+    {#if selected && hasDepths}
+      <div class="w-[340px] shrink-0">
+        <MatryoshkaPanel />
+      </div>
+    {/if}
+  </div>
+</FloatingWindow>

@@ -8,6 +8,15 @@ export default defineConfig({
   base: '/',
   plugins: [svelte(), tailwindcss(), ortWasmPlugin()],
   server: {
+    // Pre-transform components at startup. Without this, the browser can ask
+    // for a component's extracted style sub-module
+    // (`Foo.svelte?svelte&type=style&lang.css`) before vite-plugin-svelte has
+    // compiled its parent. Vite then falls back to reading the raw .svelte
+    // file off disk and hands that to @tailwindcss/vite, which tries to parse
+    // the <script> as CSS and dies with "Invalid declaration: `onMount`".
+    warmup: {
+      clientFiles: ['./src/**/*.svelte'],
+    },
     proxy: {
       '/zarr': 'http://localhost:9999',
     },

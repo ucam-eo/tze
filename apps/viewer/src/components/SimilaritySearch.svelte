@@ -1,12 +1,18 @@
 <script lang="ts">
   import { get } from 'svelte/store';
-  import { sourceManager, displayManager } from '../stores/zarr';
+  import { sourceManager, displayManager, metadata } from '../stores/zarr';
   import { simScores, simRefEmbedding, simSelectedPixel, simThreshold, simEmbeddingTileCount } from '../stores/similarity';
   import { roiLoading } from '../stores/drawing';
   import { activeTool } from '../stores/tools';
-  import { computeSimilarityScores, renderSimilarityCanvas } from '@ucam-eo/tessera-tasks';
+  import { computeSimilarityScores, renderSimilarityCanvas, topKOverlap } from '@ucam-eo/tessera-tasks';
+  import type { SimilarityResult } from '@ucam-eo/tessera-tasks';
+
+  /** How many of the best-scoring pixels the depth comparison checks. */
+  const TOP_K = 100;
 
   let isComputing = $state(false);
+  /** Agreement between a truncated-depth search and the full-depth one. */
+  let depthAgreement = $state<{ depth: number; nBands: number; overlap: number }[]>([]);
   let pendingRecompute = false;
   let overlayCanvases = new Map<string, HTMLCanvasElement>();
 
@@ -126,6 +132,7 @@
       $simScores = results;
       overlayCanvases = new Map();
       applyThreshold();
+      compareDepths(results);
     } finally {
       isComputing = false;
       if (pendingRecompute) {
@@ -133,6 +140,56 @@
         runCompute();
       }
     }
+  }
+
+  /**
+   * Score the same reference at every shallower matryoshka depth and report how
+   * much of the full-depth top-K each one would still surface.
+   *
+   * Costs no extra bandwidth: the loaded embeddings already hold the shallow
+   * vectors, since each depth's array is a prefix of the full one. Truncating
+   * the reference is all it takes — `computeSimilarityScores` normalises by
+   * however many dimensions the reference carries.
+   */
+  function compareDepths(fullResults: Map<string, SimilarityResult>) {
+    const mgr = $sourceManager;
+    const ref = $simRefEmbedding;
+    const depths = get(metadata)?.geoemb_depths?.map(d => d.dimensions) ?? [];
+    if (!mgr || !ref || depths.length < 2) { depthAgreement = []; return; }
+
+    const regions = mgr.getEmbeddingRegions();
+    const fullScores = concatScores(fullResults, regions.keys());
+
+    depthAgreement = depths
+      .filter(depth => depth < ref.length)
+      .map(depth => {
+        const truncated = ref.slice(0, depth);
+        const results = new Map<string, SimilarityResult>();
+        for (const [zoneId, region] of regions) {
+          results.set(zoneId, computeSimilarityScores(region, truncated));
+        }
+        return {
+          depth,
+          nBands: ref.length,
+          overlap: topKOverlap(concatScores(results, regions.keys()), fullScores, TOP_K),
+        };
+      });
+  }
+
+  /** Flatten per-zone scores into one array, in a stable zone order. */
+  function concatScores(results: Map<string, SimilarityResult>, zoneIds: Iterable<string>): Float32Array {
+    const parts: Float32Array[] = [];
+    let total = 0;
+    for (const zoneId of zoneIds) {
+      const r = results.get(zoneId);
+      if (!r) continue;
+      parts.push(r.scores);
+      total += r.scores.length;
+    }
+    const all = new Float32Array(total);
+    let at = 0;
+    for (const part of parts) { all.set(part, at); at += part.length; }
+    return all;
   }
 
   /** Render threshold into per-zone canvases and push to map. */
@@ -157,6 +214,7 @@
     $simRefEmbedding = null;
     $simScores = new Map();
     overlayCanvases = new Map();
+    depthAgreement = [];
   }
 
   // React to threshold changes from any source (sidebar slider or UMAP window slider)
@@ -190,5 +248,23 @@
 
   {#if isComputing}
     <div class="text-[9px] text-purple-400 animate-pulse">Computing similarity...</div>
+  {/if}
+
+  {#if depthAgreement.length > 0}
+    <div class="space-y-1 border-t border-gray-800/40 pt-2">
+      <div class="text-[9px] text-gray-500">Same search at lower depth</div>
+      {#each depthAgreement as d (d.depth)}
+        <div class="flex items-center justify-between gap-2 text-[9px] tabular-nums">
+          <span class="text-gray-400">d{d.depth}</span>
+          <span class="text-gray-600">{(d.nBands / d.depth).toFixed(0)}× less data</span>
+          <span class:text-term-cyan={d.overlap >= 0.9}
+                class:text-yellow-400={d.overlap >= 0.5 && d.overlap < 0.9}
+                class:text-red-400={d.overlap < 0.5}>
+            {Number.isNaN(d.overlap) ? '—' : `${Math.round(d.overlap * 100)}%`}
+          </span>
+        </div>
+      {/each}
+      <div class="text-[8px] text-gray-600">of the top {TOP_K} pixels, vs the full-depth search</div>
+    </div>
   {/if}
 </div>

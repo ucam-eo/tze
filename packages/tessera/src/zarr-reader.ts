@@ -1,5 +1,8 @@
 import * as zarr from 'zarrita';
+import { withRangeCoalescing, withRequestCoalescing } from './coalescing.js';
+import { withRetry } from './retry.js';
 import type { StoreMetadata } from './types.js';
+import { parseDepths } from './depths.js';
 
 /**
  * Parse a geoemb:model URL into a human-readable name + version.
@@ -46,15 +49,35 @@ export interface ZarrStore {
   /** Per-pixel dequantisation scales. v1: `[H, W]`, v2: `[T, H, W]`. */
   scalesArr: zarr.Array<zarr.DataType>;
 
-  /** Pre-rendered RGB preview array, if present. */
-  rgbArr: zarr.Array<zarr.DataType> | null;
+  /** Root location of the zone group, for opening further arrays lazily. */
+  rootLoc: zarr.Location<zarr.Readable>;
+}
 
-  /**
-   * Set of existing chunk keys (e.g. `"3_7"`), loaded from
-   * `_chunk_manifest.json` if available. Used to skip 404s for
-   * sparse stores.
-   */
-  chunkManifest: Set<string> | null;
+const parentAttrsCache = new Map<string, Promise<Record<string, unknown>>>();
+
+/**
+ * Read `geoemb:` attributes from a store's parent root group, memoised per URL.
+ *
+ * @remarks
+ * Every UTM zone under a store shares one parent group, so without the cache
+ * each zone re-fetches the identical `zarr.json`.
+ */
+function getParentAttrs(parentUrl: string): Promise<Record<string, unknown>> {
+  let p = parentAttrsCache.get(parentUrl);
+  if (!p) {
+    p = (async () => {
+      const parentStore = await zarr.extendStore(
+        new zarr.FetchStore(parentUrl),
+        withRetry,
+        withRequestCoalescing,
+        withRangeCoalescing,
+      );
+      const parentGroup = await zarr.open.v3(zarr.root(parentStore), { kind: 'group' });
+      return parentGroup.attrs as Record<string, unknown>;
+    })().catch(() => ({}));
+    parentAttrsCache.set(parentUrl, p);
+  }
+  return p;
 }
 
 /**
@@ -68,34 +91,34 @@ export interface ZarrStore {
  * efficient HTTP range requests: concurrent `getRange` calls on the same
  * path within a microtask are merged into one fetch. Reads group attributes
  * for CRS, transform, and array discovery.
+ *
+ * Every node is opened with `zarr.open.v3`. zarrita's auto-detecting
+ * `zarr.open` probes v2 first on a store it has not seen before (`.zattrs`,
+ * then `.zgroup`/`.zarray`), costing two sequential 404 round-trips per node
+ * before it reaches `zarr.json`. TESSERA stores are always v3.
  */
 export async function openStore(url: string): Promise<ZarrStore> {
   const store = await zarr.extendStore(
     new zarr.FetchStore(url),
-    zarr.withRangeCoalescing,
+    withRetry,
+    withRequestCoalescing,
+    withRangeCoalescing,
   );
   const rootLoc = zarr.root(store);
-  const group = await zarr.open(rootLoc, { kind: 'group' });
-  const attrs = group.attrs as Record<string, unknown>;
 
-  const embArr = await zarr.open(rootLoc.resolve('embeddings'), { kind: 'array' });
-  const scalesArr = await zarr.open(rootLoc.resolve('scales'), { kind: 'array' });
+  const [group, embArr, scalesArr] = await Promise.all([
+    zarr.open.v3(rootLoc, { kind: 'group' }),
+    zarr.open.v3(rootLoc.resolve('embeddings'), { kind: 'array' }),
+    zarr.open.v3(rootLoc.resolve('scales'), { kind: 'array' }),
+  ]);
+  const attrs = group.attrs as Record<string, unknown>;
 
   // --- Read geoemb: convention fields from parent root group ---
   // geoemb attributes live on the root store (e.g. store.zarr), not the
   // per-zone subgroup (e.g. store.zarr/utm30).
-  let geoemAttrs: Record<string, unknown> = {};
   const parentUrl = url.replace(/\/[^/]+\/?$/, '');
-  if (parentUrl !== url) {
-    try {
-      const parentStore = await zarr.extendStore(
-        new zarr.FetchStore(parentUrl),
-        zarr.withRangeCoalescing,
-      );
-      const parentGroup = await zarr.open(zarr.root(parentStore), { kind: 'group' });
-      geoemAttrs = parentGroup.attrs as Record<string, unknown>;
-    } catch { /* parent not readable */ }
-  }
+  const geoemAttrs: Record<string, unknown> =
+    parentUrl !== url ? await getParentAttrs(parentUrl) : {};
 
   const geoemType = geoemAttrs['geoemb:type'] as string | undefined;
   const geoemDimensions = geoemAttrs['geoemb:dimensions'] as number | undefined;
@@ -180,34 +203,11 @@ export async function openStore(url: string): Promise<ZarrStore> {
   // NCHW layout: 4D array with time dimension
   const isV2 = embArr.shape.length === 4;
 
-  // Try optional preview arrays
-  let rgbArr: zarr.Array<zarr.DataType> | null = null;
-  let hasRgb = false;
-
-  try {
-    rgbArr = await zarr.open(rootLoc.resolve('rgb'), { kind: 'array' });
-    hasRgb = true;
-  } catch { /* no rgb preview */ }
-
-  // Try chunk manifest
-  let chunkManifest: Set<string> | null = null;
-  try {
-    const resp = await fetch(`${url}/_chunk_manifest.json`);
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data?.chunks) {
-        chunkManifest = new Set(
-          (data.chunks as [number, number][]).map(([ci, cj]) => `${ci}_${cj}`)
-        );
-      }
-      if (data?.has_rgb !== undefined) hasRgb = data.has_rgb;
-
-      // Re-open rgb array if manifest says it exists but we didn't find it
-      if (hasRgb && !rgbArr) {
-        try { rgbArr = await zarr.open(rootLoc.resolve('rgb'), { kind: 'array' }); } catch { hasRgb = false; }
-      }
-    }
-  } catch { /* no manifest */ }
+  // Matryoshka depths. The truncated arrays are NCHW-only, so a store using
+  // the older HWB layout is treated as having none regardless of the attribute.
+  const depths = isV2
+    ? parseDepths(geoemAttrs, (embArr.shape[1] as number) ?? 0)
+    : [];
 
   let meta: StoreMetadata;
 
@@ -219,7 +219,7 @@ export async function openStore(url: string): Promise<ZarrStore> {
     // Derive years: try reading the time coordinate array
     let years: number[] = [];
     try {
-      const timeArr = await zarr.open(rootLoc.resolve('time'), { kind: 'array' });
+      const timeArr = await zarr.open.v3(rootLoc.resolve('time'), { kind: 'array' });
       const timeData = await zarr.get(timeArr, [null]);
       years = Array.from(timeData.data as Int32Array);
     } catch {
@@ -235,11 +235,11 @@ export async function openStore(url: string): Promise<ZarrStore> {
       shape: [H, W, nBands],
       chunkShape: [chunks[2], chunks[3], chunks[1]],
       nBands,
-      hasRgb,
       version: 'v2',
       years,
       timeIndex: years.length > 0 ? years.length - 1 : 0,
       ...provenance,
+      geoemb_depths: depths,
     };
   } else {
     // HWB layout — embArr.shape is [H, W, B]
@@ -251,7 +251,6 @@ export async function openStore(url: string): Promise<ZarrStore> {
       shape: embArr.shape as [number, number, number],
       chunkShape: embArr.chunks as [number, number, number],
       nBands: (embArr.shape[2] as number) || 128,
-      hasRgb,
       version: 'v1',
       ...provenance,
     };
@@ -262,7 +261,7 @@ export async function openStore(url: string): Promise<ZarrStore> {
     console.warn(`[tessera] geoemb:dimensions (${geoemDimensions}) does not match array nBands (${meta.nBands})`);
   }
 
-  return { meta, embArr, scalesArr, rgbArr, chunkManifest };
+  return { meta, embArr, scalesArr, rootLoc };
 }
 
 /**
@@ -284,4 +283,19 @@ export async function fetchRegion(
   );
   const chunk = await zarr.get(arr, sel, { signal: opts?.signal });
   return chunk as { data: ArrayBufferView; shape: number[] };
+}
+
+/**
+ * Open a further array under an already-open store.
+ *
+ * @param store - The opened store, whose root location and HTTP handle are reused.
+ * @param name - Array name relative to the zone group (e.g. `embeddings_d4`).
+ * @returns The opened zarrita array handle.
+ *
+ * @remarks
+ * Reuses the store's extended handle, so these reads share its retry,
+ * request-coalescing, and range-coalescing behaviour.
+ */
+export function openArray(store: ZarrStore, name: string): Promise<zarr.Array<zarr.DataType>> {
+  return zarr.open.v3(store.rootLoc.resolve(name), { kind: 'array' });
 }
