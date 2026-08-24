@@ -834,13 +834,16 @@ export class MaplibreTesseraSource {
     for (const id of previewLayers) this.map.moveLayer(id);
     // Per-chunk embedding layers
     for (const id of chunkLayers) this.map.moveLayer(id);
-    // Region loading animation (above preview + chunks)
-    if (this.map.getLayer('zarr-region-anim-lyr')) this.map.moveLayer('zarr-region-anim-lyr');
     // RGB region canvas
     if (this.map.getLayer('zarr-rgb-overlay-lyr')) this.map.moveLayer('zarr-rgb-overlay-lyr');
     // Similarity overlay (single region-wide layer)
     if (this.map.getLayer('zarr-sim-overlay-lyr')) this.map.moveLayer('zarr-sim-overlay-lyr');
     for (const id of classLayers) this.map.moveLayer(id);
+    // Region loading animation, above every result it is replacing. Reloading
+    // a region at a new depth leaves the previous load's RGB canvas — and any
+    // similarity or classification overlay — on the map, and stacking the
+    // animation beneath them hid the progress entirely.
+    if (this.map.getLayer('zarr-region-anim-lyr')) this.map.moveLayer('zarr-region-anim-lyr');
     // Label pixel polygons (training labels for classifier)
     if (this.map.getLayer('label-pixels-fill')) this.map.moveLayer('label-pixels-fill');
     if (this.map.getLayer('label-pixels-line')) this.map.moveLayer('label-pixels-line');
