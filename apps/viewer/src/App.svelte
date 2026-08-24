@@ -31,6 +31,7 @@
   import { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';
   import { drawMode, roiDrawing, roiRegions, roiLoading, addRegion, setConfirmLargeRegion } from './stores/drawing';
   import ConfirmModal from './components/ConfirmModal.svelte';
+  import { formatBytes } from './stores/depth';
   import WelcomeModal from './components/WelcomeModal.svelte';
 
   let mapContainer: HTMLDivElement;
@@ -43,11 +44,13 @@
 
   // Large region confirmation modal state
   let largeRegionOpen = $state(false);
-  let largeRegionCount = $state(0);
+  let largeRegionBytes = $state(0);
   let largeRegionResolve: ((proceed: boolean) => void) | null = null;
 
-  setConfirmLargeRegion((count: number) => {
-    largeRegionCount = count;
+  // Sized in bytes, not tiles: the same tile count is 4 MB at d16 and 32 MB
+  // at full depth.
+  setConfirmLargeRegion((bytes: number) => {
+    largeRegionBytes = bytes;
     largeRegionOpen = true;
     return new Promise<boolean>((resolve) => {
       largeRegionResolve = resolve;
@@ -785,9 +788,9 @@
 <ConfirmModal
   bind:open={largeRegionOpen}
   title="Large Region"
-  message="This region contains {largeRegionCount.toLocaleString()} chunks. Loading may take significant time and bandwidth."
-  detail="Consider drawing a smaller region, or continue if you have a fast connection."
-  confirmLabel="Load {largeRegionCount.toLocaleString()} chunks"
+  message="This region needs about {formatBytes(largeRegionBytes)} of embeddings. Loading may take significant time and bandwidth."
+  detail="Consider drawing a smaller region, lowering the detail setting, or continue if you have a fast connection."
+  confirmLabel="Load {formatBytes(largeRegionBytes)}"
   onconfirm={() => { largeRegionOpen = false; largeRegionResolve?.(true); largeRegionResolve = null; }}
   oncancel={() => { largeRegionOpen = false; largeRegionResolve?.(false); largeRegionResolve = null; }}
 />

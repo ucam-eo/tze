@@ -392,6 +392,24 @@ export class SourceManager extends EventEmitter<TesseraEvents> {
   }
 
   /**
+   * Embedding dimensions the loaded regions carry.
+   *
+   * @returns The shared depth, or `null` when nothing is loaded. Zones are
+   *   always loaded at one depth, so a disagreement means a load is still in
+   *   flight; the shallowest is reported, since that is what every consumer
+   *   can safely read.
+   */
+  get regionDepth(): number | null {
+    let depth: number | null = null;
+    for (const src of this.sources.values()) {
+      const d = src.regionDepth;
+      if (d === null) continue;
+      depth = depth === null ? d : Math.min(depth, d);
+    }
+    return depth;
+  }
+
+  /**
    * Bounding box of all loaded embeddings across all zones.
    *
    * @returns `[south, west, north, east]` in WGS84 degrees, or `null` if no

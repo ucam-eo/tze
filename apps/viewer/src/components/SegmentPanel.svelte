@@ -1,7 +1,9 @@
 <script lang="ts">
   import { ChevronDown, Sun } from 'lucide-svelte';
-  import { sourceManager } from '../stores/zarr';
+  import { sourceManager, metadata } from '../stores/zarr';
   import { segmentPolygons } from '../stores/segmentation';
+  import { fullDepth, estimateBytes, formatBytes } from '../stores/depth';
+  import { roiRegions, upgradeRegions } from '../stores/drawing';
   import type { SegmentationSession } from '@ucam-eo/tessera-tasks';
 
   let segSession: SegmentationSession | null = null;
@@ -26,6 +28,23 @@
 
   let threshold = $state(0.5);
   let isRunning = $state(false);
+  let upgrading = $state(false);
+
+  // The UNet declares in_channels: 128 and its normalisation stats are 128
+  // long, so it cannot run on a region loaded at a shallower depth.
+  const regionDepth = $derived($sourceManager?.regionDepth ?? null);
+  const needsUpgrade = $derived(!!regionDepth && !!$fullDepth && regionDepth < $fullDepth);
+  const upgradeBytes = $derived.by(() => {
+    const cs = $metadata?.chunkShape;
+    if (!cs || !$fullDepth) return 0;
+    const tiles = $roiRegions.reduce((n, r) => n + r.chunkKeys.length, 0);
+    return estimateBytes(tiles, cs[0], cs[1], $fullDepth);
+  });
+
+  async function runUpgrade() {
+    upgrading = true;
+    try { await upgradeRegions(); } finally { upgrading = false; }
+  }
   let progressDone = $state(0);
   let progressTotal = $state(0);
   let resultCount = $state(0);
@@ -145,6 +164,22 @@
     </div>
   {/if}
 
+  {#if needsUpgrade}
+    <div class="space-y-1.5">
+      <div class="text-[9px] text-amber-400/80 leading-relaxed">
+        Region loaded at d{regionDepth}; this model needs all {$fullDepth} dimensions.
+      </div>
+      <button
+        onclick={runUpgrade}
+        disabled={upgrading}
+        class="w-full text-[10px] px-2 py-2 rounded border transition-all
+               text-term-cyan border-term-cyan/40 hover:bg-term-cyan/10
+               disabled:opacity-50 disabled:cursor-wait"
+      >
+        {upgrading ? `Reloading at d${$fullDepth}…` : `Upgrade to d${$fullDepth} — ${formatBytes(upgradeBytes)}`}
+      </button>
+    </div>
+  {:else}
   <button
     data-tutorial="segment-detect-btn"
     onclick={handleDetect}
@@ -157,6 +192,7 @@
   >
     {isRunning ? 'DETECTING...' : `DETECT ${activeDetector.label.toUpperCase()}`}
   </button>
+  {/if}
 
   {#if isRunning && progressTotal > 0}
     <div class="space-y-1">

@@ -55,6 +55,37 @@ the same pixels read on each depth's own chunk grid:
 Tile-at-a-time loading would deliver a 2× saving at d16 instead of 8×. The
 loader must group tiles into whole chunks of the depth being read.
 
+### The wire saving is smaller than the decoded saving
+
+Decoded bytes are what the chunk accounting above reports. What actually
+crosses the network, measured over a 16-tile (128×128 px) region with a fresh
+source per depth:
+
+| | requests | downloaded |
+| --- | --- | --- |
+| d16 | 5 | **577 KB** |
+| d128 | 25 | 2094 KB |
+
+3.6× less data and 5× fewer requests — real, but short of the 8× the decoded
+accounting predicts, for two reasons:
+
+- **`scales` is depth-independent.** One float32 per pixel is read at full
+  resolution whatever the depth, so it costs the same at d16 as at d128. In
+  the measurement above it was ~305 KB — over half the d16 total — against
+  ~271 KB of actual embeddings.
+- **Range coalescing over-fetches.** A single 256 KB read covered scales
+  chunks totalling ~64 KB of what was needed; the merge spans the gaps
+  between them. Tightening the gap tolerance would recover some of the
+  difference and is worth investigating separately.
+
+The memory saving is unaffected by either: the region buffer is exactly
+`nBands` wide, so d16 is 8× smaller regardless of transfer.
+
+*(A previous draft of this section claimed a 104 MB full-object fetch per
+shard. That was a measurement error: zarrita issues one HEAD per shard to
+locate its index, and a HEAD reports the file's `Content-Length` while
+transferring no body.)*
+
 ### Upgrading is a full re-read, not a top-up
 
 An inner chunk of `embeddings` holds all 128 bands, so slicing bands 16–127

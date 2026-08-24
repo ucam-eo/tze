@@ -1,12 +1,17 @@
 import { writable, derived, get } from 'svelte/store';
-import { sourceManager, displayManager } from './zarr';
-import { simEmbeddingTileCount } from './similarity';
+import { sourceManager, displayManager, metadata } from './zarr';
+import { simEmbeddingTileCount, simRefEmbedding, simSelectedPixel } from './similarity';
+import { loadDepth, fullDepth, estimateBytes, formatBytes } from './depth';
+import { labels } from './classifier';
+import { segmentPolygons } from './segmentation';
 
 export type DrawMode = 'polygon' | 'rectangle';
 export type RoiRegion = {
   id: string;
   feature: GeoJSON.Feature;
   chunkKeys: string[]; // "zoneId:ci_cj" keys loaded for this region
+  /** Embedding dimensions this region was loaded at. */
+  depth?: number;
 };
 
 /** Whether terra-draw is currently active for drawing. */
@@ -32,7 +37,8 @@ export const roiTileCount = derived(roiRegions, ($regions) => {
 
 let nextId = 0;
 
-const LARGE_REGION_THRESHOLD = 1000;
+/** Warn above this much decoded embedding data for one region. */
+const LARGE_REGION_BYTES = 64 * 1024 * 1024;
 
 let _confirmLargeRegion: ((count: number) => Promise<boolean>) | null = null;
 
@@ -41,34 +47,22 @@ export function setConfirmLargeRegion(fn: (count: number) => Promise<boolean>) {
   _confirmLargeRegion = fn;
 }
 
-/** Called when terra-draw finishes a shape. Starts loading chunks for the region.
- *  Returns false if the user cancelled (e.g. large region confirmation).
- *  Pass skipConfirm=true to bypass the large-region modal (used by tutorials). */
-export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false } = {}): Promise<boolean> {
-  const sm = get(sourceManager);
+/**
+ * Load managed chunks zone by zone, animating and reporting progress.
+ *
+ * @param depth - Embedding dimensions to load, or undefined for full depth.
+ *
+ * @remarks
+ * Shared by drawing a region and upgrading one, so both animate, report and
+ * batch identically.
+ */
+async function loadManagedChunks(
+  managedChunks: { zoneId: string; ci: number; cj: number }[],
+  geometry: GeoJSON.Polygon,
+  depth: number | undefined,
+): Promise<void> {
   const dm = get(displayManager);
-  if (!sm) return false;
 
-  const geometry = feature.geometry as GeoJSON.Polygon;
-  const managedChunks = await sm.getChunksInRegion(geometry);
-
-  if (!skipConfirm && managedChunks.length > LARGE_REGION_THRESHOLD && _confirmLargeRegion) {
-    const proceed = await _confirmLargeRegion(managedChunks.length);
-    if (!proceed) return false;
-  }
-
-  const region: RoiRegion = {
-    id: `roi-${nextId++}`,
-    feature,
-    chunkKeys: [],
-  };
-
-  // Add region immediately (shows in UI with 0 tiles)
-  roiRegions.update(rs => [...rs, region]);
-
-  if (managedChunks.length === 0) return true;
-
-  // Group chunks by zone for loading
   const byZone = new Map<string, { ci: number; cj: number }[]>();
   for (const { zoneId, ci, cj } of managedChunks) {
     let arr = byZone.get(zoneId);
@@ -76,14 +70,12 @@ export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false 
     arr.push({ ci, cj });
   }
 
-  // Start animations per zone
   if (dm) {
     for (const [zoneId, chunks] of byZone) {
       dm.startRegionAnimation(zoneId, geometry, chunks);
     }
   }
 
-  // Load per zone with progress tracking (throttled to one update per frame)
   const total = managedChunks.length;
   roiLoading.set({ loaded: 0, total });
   let globalLoaded = 0;
@@ -102,21 +94,55 @@ export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false 
             roiLoading.set({ loaded: globalLoaded, total });
           });
         }
-      });
+      }, { depth });
     }
-    // Cancel any pending rAF and flush final count before next zone
     if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     roiLoading.set({ loaded: globalLoaded, total });
   }
 
-  // Cancel any trailing rAF so it doesn't overwrite the null below
   if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
 
-  // Stop all animations and re-render
   if (dm) {
     dm.stopRegionAnimation();
     dm.recolorAllChunks();
   }
+}
+
+/** Called when terra-draw finishes a shape. Starts loading chunks for the region.
+ *  Returns false if the user cancelled (e.g. large region confirmation).
+ *  Pass skipConfirm=true to bypass the large-region modal (used by tutorials). */
+export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false } = {}): Promise<boolean> {
+  const sm = get(sourceManager);
+  const dm = get(displayManager);
+  if (!sm) return false;
+
+  const geometry = feature.geometry as GeoJSON.Polygon;
+  const managedChunks = await sm.getChunksInRegion(geometry);
+
+  // Read the depth once: a mid-load change must not split a region across
+  // two widths.
+  const depth = get(loadDepth) || get(fullDepth) || undefined;
+  const cs = get(metadata)?.chunkShape;
+  const bytes = cs && depth ? estimateBytes(managedChunks.length, cs[0], cs[1], depth) : 0;
+
+  if (!skipConfirm && bytes > LARGE_REGION_BYTES && _confirmLargeRegion) {
+    const proceed = await _confirmLargeRegion(bytes);
+    if (!proceed) return false;
+  }
+
+  const region: RoiRegion = {
+    id: `roi-${nextId++}`,
+    feature,
+    chunkKeys: [],
+    depth,
+  };
+
+  // Add region immediately (shows in UI with 0 tiles)
+  roiRegions.update(rs => [...rs, region]);
+
+  if (managedChunks.length === 0) return true;
+
+  await loadManagedChunks(managedChunks, geometry, depth);
 
   // Record which chunks this region owns (zone-prefixed keys)
   const loadedKeys: string[] = [];
@@ -132,6 +158,53 @@ export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false 
   roiLoading.set(null);
   simEmbeddingTileCount.set(sm.totalTileCount());
   return true;
+}
+
+/**
+ * Reload every region at the store's full depth and refresh what was derived
+ * from the shallow one.
+ *
+ * @remarks
+ * Not a top-up: an inner chunk of the full array carries every band, so
+ * reading only the missing dimensions would cost the same as reading all of
+ * them. Cached vectors — training labels and the similarity reference — were
+ * captured at the old width and would not match the new region, so they are
+ * re-extracted from their coordinates before anything reruns. Segment
+ * polygons come from a model that only accepts full depth, so they are
+ * cleared rather than migrated.
+ */
+export async function upgradeRegions(): Promise<void> {
+  const sm = get(sourceManager);
+  const full = get(fullDepth);
+  if (!sm || !full) return;
+
+  loadDepth.set(full);
+  segmentPolygons.set({ type: 'FeatureCollection', features: [] });
+
+  for (const region of get(roiRegions)) {
+    if (region.depth === full) continue;
+    const geometry = region.feature.geometry as GeoJSON.Polygon;
+    const managedChunks = await sm.getChunksInRegion(geometry);
+    if (managedChunks.length === 0) continue;
+    await loadManagedChunks(managedChunks, geometry, full);
+  }
+
+  roiRegions.update(rs => rs.map(r => ({ ...r, depth: full })));
+
+  // Re-extract vectors captured at the old width.
+  labels.update(ls => ls.map(l => {
+    const emb = sm.getEmbeddingAt(l.lngLat[0], l.lngLat[1]);
+    return emb ? { ...l, embedding: emb.embedding } : l;
+  }));
+
+  const px = get(simSelectedPixel);
+  if (px) {
+    const emb = sm.getEmbeddingAt(px.lng, px.lat);
+    if (emb) simRefEmbedding.set(emb.embedding);
+  }
+
+  roiLoading.set(null);
+  simEmbeddingTileCount.set(sm.totalTileCount());
 }
 
 /** Remove a single region. Evict its exclusive tiles from the embedding cache. */

@@ -282,11 +282,13 @@ export class MaplibreTesseraSource {
   async loadChunkBatch(
     chunks: ChunkRef[],
     onProgress?: (loaded: number, total: number, ci: number, cj: number) => void,
+    opts?: { depth?: number },
   ): Promise<number> {
     if (chunks.length === 0) return 0;
     this.batchLoading = true;
 
     await this.source.loadChunks(chunks, {
+      depth: opts?.depth,
       onProgress: (loaded, total, chunk) => {
         onProgress?.(loaded, total, chunk.ci, chunk.cj);
       },

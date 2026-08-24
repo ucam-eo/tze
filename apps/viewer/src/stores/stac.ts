@@ -6,6 +6,7 @@ import { pointInBbox, loadStore } from '../lib/stac';
 import { mapInstance } from './map';
 import { sourceManager, displayManager, metadata, bands, opacity, reportLoading, clearLoading, status, globalPreviewUrl, globalPreviewBounds } from './zarr';
 import { clearAllRegions } from './drawing';
+import { resetLoadDepth } from './depth';
 import { simSelectedPixel, simScores, simRefEmbedding } from './similarity';
 import { labels, isClassified } from './classifier';
 import { segmentPolygons } from './segmentation';
@@ -175,6 +176,7 @@ export async function initManager(initialZoneId?: string): Promise<void> {
 
     sm.on('metadata-loaded', (meta) => {
       metadata.set(meta);
+      resetLoadDepth();
       status.set(`Loaded: zone ${meta.utmZone}`);
     });
     sm.on('loading', reportLoading);

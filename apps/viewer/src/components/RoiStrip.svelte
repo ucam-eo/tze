@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Pentagon, BoxSelect, X, Plus, Trash2, Download, Upload } from 'lucide-svelte';
-  import { roiDrawing, drawMode, roiRegions, roiLoading, roiTileCount, clearAllRegions, removeRegion, addRegion, type DrawMode } from '../stores/drawing';
+  import { roiDrawing, drawMode, roiRegions, roiLoading, roiTileCount, clearAllRegions, removeRegion, addRegion, upgradeRegions, type DrawMode } from '../stores/drawing';
+  import { availableDepths, loadDepth, fullDepth, estimateBytes, formatBytes } from '../stores/depth';
+  import { metadata } from '../stores/zarr';
 
   const modes: { id: DrawMode; icon: typeof BoxSelect; tip: string }[] = [
     { id: 'rectangle', icon: BoxSelect,  tip: 'Rectangle' },
@@ -8,6 +10,23 @@
   ];
 
   let fileInput: HTMLInputElement;
+  let upgrading = $state(false);
+
+  /** Regions loaded below full depth, which an upgrade would widen. */
+  const shallow = $derived($roiRegions.filter(r => r.depth && $fullDepth && r.depth < $fullDepth));
+
+  /** Decoded size of re-reading every shallow region at full depth. */
+  const upgradeBytes = $derived.by(() => {
+    const cs = $metadata?.chunkShape;
+    if (!cs || !$fullDepth) return 0;
+    const tiles = shallow.reduce((n, r) => n + r.chunkKeys.length, 0);
+    return estimateBytes(tiles, cs[0], cs[1], $fullDepth);
+  });
+
+  async function runUpgrade() {
+    upgrading = true;
+    try { await upgradeRegions(); } finally { upgrading = false; }
+  }
 
   function startDrawing(mode: DrawMode) {
     $drawMode = mode;
@@ -153,6 +172,21 @@
         </button>
       </div>
     </div>
+  {#if $availableDepths.length > 1}
+    <div class="flex items-center gap-1">
+      <span class="text-gray-500 text-[10px] shrink-0" title="Embedding dimensions new regions load at">Detail</span>
+      {#each $availableDepths as d}
+        <button
+          onclick={() => loadDepth.set(d)}
+          class="px-1.5 py-0.5 rounded text-[9px] border transition-colors
+                 {$loadDepth === d
+                   ? 'text-term-cyan border-term-cyan/40 bg-term-cyan/10'
+                   : 'text-gray-500 border-gray-700/60 hover:text-gray-300'}"
+        >d{d}</button>
+      {/each}
+    </div>
+  {/if}
+
   {:else}
     <!-- Region list -->
     <div class="space-y-1">
@@ -166,7 +200,10 @@
             <div class="text-gray-600 truncate" title={featureBbox(region.feature)}>
               {featureBbox(region.feature)}
             </div>
-            <div class="text-gray-600">{region.chunkKeys.length} tiles</div>
+            <div class="text-gray-600">
+              {region.chunkKeys.length} tiles
+              {#if region.depth}<span class="text-gray-700">&middot; d{region.depth}</span>{/if}
+            </div>
           </div>
           <button
             onclick={() => removeRegion(region.id)}
@@ -177,6 +214,21 @@
           </button>
         </div>
       {/each}
+
+      {#if shallow.length > 0}
+        <button
+          onclick={runUpgrade}
+          disabled={upgrading}
+          class="w-full text-[9px] px-2 py-1 rounded transition-colors
+                 bg-term-cyan/10 text-term-cyan border border-term-cyan/30
+                 hover:bg-term-cyan/20 disabled:opacity-50 disabled:cursor-wait"
+          title="Reload at full depth and rerun the current analysis"
+        >
+          {upgrading
+            ? `Reloading at d${$fullDepth}…`
+            : `Upgrade to d${$fullDepth} — ${formatBytes(upgradeBytes)}`}
+        </button>
+      {/if}
     </div>
   {/if}
 
