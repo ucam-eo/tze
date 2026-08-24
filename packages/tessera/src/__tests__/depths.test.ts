@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDepths, alignDepthWindow, depthWindowCost } from '../depths.js';
+import { parseDepths, alignDepthWindow, depthWindowCost, groupTilesByChunk } from '../depths.js';
 
 describe('parseDepths', () => {
   it('returns no depths when the store declares none', () => {
@@ -117,5 +117,51 @@ describe('depthWindowCost', () => {
     const d4 = depthWindowCost(window, 128, 128, 4);
     const d128 = depthWindowCost(window, 32, 32, 128);
     expect(d128.bytes / d4.bytes).toBe(32);
+  });
+});
+
+describe('groupTilesByChunk', () => {
+  it('reads each tile on its own when the chunk is one tile', () => {
+    // Full depth: the store's chunk IS the region's tile.
+    const groups = groupTilesByChunk(
+      [{ ci: 0, cj: 0 }, { ci: 0, cj: 1 }], 32, 32, 32, 32, 4096, 4096,
+    );
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toEqual({ r0: 0, c0: 0, height: 32, width: 32, tiles: [{ ci: 0, cj: 0 }] });
+    expect(groups[1]).toEqual({ r0: 0, c0: 32, height: 32, width: 32, tiles: [{ ci: 0, cj: 1 }] });
+  });
+
+  it('reads tiles sharing a chunk in one go', () => {
+    // d16: one 64x64 chunk covers a 2x2 block of 32x32 tiles.
+    const tiles = [{ ci: 0, cj: 0 }, { ci: 0, cj: 1 }, { ci: 1, cj: 0 }, { ci: 1, cj: 1 }];
+    const groups = groupTilesByChunk(tiles, 32, 32, 64, 64, 4096, 4096);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ r0: 0, c0: 0, height: 64, width: 64 });
+    expect(groups[0].tiles).toHaveLength(4);
+  });
+
+  it('splits tiles that fall in different chunks', () => {
+    const groups = groupTilesByChunk(
+      [{ ci: 0, cj: 0 }, { ci: 2, cj: 0 }], 32, 32, 64, 64, 4096, 4096,
+    );
+    expect(groups).toHaveLength(2);
+    expect(groups.map(g => g.r0)).toEqual([0, 64]);
+  });
+
+  it('carries only the tiles that were asked for', () => {
+    // One tile of a 2x2 chunk: the read still covers the whole chunk, but the
+    // group must not claim neighbours the caller never requested.
+    const groups = groupTilesByChunk([{ ci: 1, cj: 1 }], 32, 32, 64, 64, 4096, 4096);
+    expect(groups[0].tiles).toEqual([{ ci: 1, cj: 1 }]);
+    expect(groups[0]).toMatchObject({ r0: 0, c0: 0, height: 64, width: 64 });
+  });
+
+  it('clips the read at the array edge', () => {
+    const edge = groupTilesByChunk([{ ci: 2, cj: 2 }], 32, 32, 64, 64, 100, 80);
+    expect(edge[0]).toMatchObject({ r0: 64, c0: 64, height: 36, width: 16 });
+  });
+
+  it('returns nothing for no tiles', () => {
+    expect(groupTilesByChunk([], 32, 32, 64, 64, 4096, 4096)).toEqual([]);
   });
 });

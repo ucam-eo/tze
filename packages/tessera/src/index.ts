@@ -17,8 +17,8 @@ export type { ZarrStore } from './zarr-reader.js';
 
 export type { LoadChunksOptions } from './tessera-source.js';
 
-export { parseDepths, alignDepthWindow, depthWindowCost } from './depths.js';
-export type { DepthDescriptor, DepthWindow, DepthWindowResult } from './depths.js';
+export { parseDepths, alignDepthWindow, depthWindowCost, groupTilesByChunk } from './depths.js';
+export type { DepthDescriptor, DepthWindow, DepthWindowResult, TileGroup } from './depths.js';
 export { dequantiseNCHW } from './dequantise.js';
 
 export type {

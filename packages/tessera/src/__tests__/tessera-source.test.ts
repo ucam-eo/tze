@@ -124,6 +124,18 @@ describe('TesseraSource', () => {
     expect(progressArgs[0]).toEqual({ loaded: 1, total: 2, chunk: { ci: 3, cj: 7 } });
   });
 
+  it('regionDepth is null before anything is loaded', () => {
+    const source = new TesseraSource({ url: 'https://example.com/zarr' });
+    expect(source.regionDepth).toBeNull();
+  });
+
+  it('loadChunks with no store leaves the region untouched at any depth', async () => {
+    const source = new TesseraSource({ url: 'https://example.com/zarr' });
+    await source.loadChunks([{ ci: 0, cj: 0 }], { depth: 16 });
+    expect(source.embeddingRegion).toBeNull();
+    expect(source.regionDepth).toBeNull();
+  });
+
   it('depths is empty when the store is not open', () => {
     const source = new TesseraSource({ url: 'https://example.com/zarr' });
     expect(source.depths).toEqual([]);

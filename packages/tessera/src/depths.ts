@@ -14,6 +14,8 @@
  * the full-depth `embeddings` array.
  */
 
+import type { ChunkRef } from './types.js';
+
 /** One entry from a store's `geoemb:depths` attribute. */
 export interface DepthDescriptor {
   /** Number of embedding dimensions this array carries. */
@@ -31,6 +33,11 @@ export interface DepthWindow {
   width: number;
 }
 
+/** A single read covering one chunk, and the tiles it satisfies. */
+export interface TileGroup extends DepthWindow {
+  tiles: ChunkRef[];
+}
+
 /** Dequantised embeddings for one window at one depth, with what they cost. */
 export interface DepthWindowResult extends DepthWindow {
   /** Dequantised values, pixel-major: `height * width * nBands` floats. */
@@ -44,6 +51,59 @@ export interface DepthWindowResult extends DepthWindow {
 
   /** Decoded size of those chunks in bytes. */
   bytes: number;
+}
+
+/**
+ * Batch tile requests into whole chunks of the array being read.
+ *
+ * @param tiles - Region tiles wanted, in the region's own tile grid.
+ * @param tileH - Region tile height in pixels.
+ * @param tileW - Region tile width in pixels.
+ * @param chunkH - Chunk height of the array being read.
+ * @param chunkW - Chunk width of the array being read.
+ * @param imageH - Array height, for clipping the last row.
+ * @param imageW - Array width, for clipping the last column.
+ * @returns One entry per chunk touched, each naming the tiles it satisfies.
+ *
+ * @remarks
+ * The depth arrays trade bands for spatial extent, so a shallow array's chunk
+ * spans several region tiles — 64x64 at 16-d, 128x128 at 4-d, against a 32x32
+ * tile. Reading tile by tile would decode a whole chunk per tile and discard
+ * most of it, cutting the saving at 16-d from 8x to 2x. Grouping first means
+ * each chunk is decoded once. At full depth chunk and tile coincide, so every
+ * group holds exactly one tile and the request pattern is unchanged.
+ */
+export function groupTilesByChunk(
+  tiles: readonly ChunkRef[],
+  tileH: number,
+  tileW: number,
+  chunkH: number,
+  chunkW: number,
+  imageH: number,
+  imageW: number,
+): TileGroup[] {
+  const groups = new Map<string, TileGroup>();
+
+  for (const tile of tiles) {
+    const r0 = Math.floor((tile.ci * tileH) / chunkH) * chunkH;
+    const c0 = Math.floor((tile.cj * tileW) / chunkW) * chunkW;
+    const key = `${r0}_${c0}`;
+
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        r0,
+        c0,
+        height: Math.min(chunkH, imageH - r0),
+        width: Math.min(chunkW, imageW - c0),
+        tiles: [],
+      };
+      groups.set(key, group);
+    }
+    group.tiles.push(tile);
+  }
+
+  return [...groups.values()];
 }
 
 /**

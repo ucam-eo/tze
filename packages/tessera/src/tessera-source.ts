@@ -2,7 +2,7 @@ import { EventEmitter } from './event-emitter.js';
 import { UtmProjection } from './projection.js';
 import { openStore, openArray, fetchRegion, type ZarrStore } from './zarr-reader.js';
 import { dequantiseNCHW } from './dequantise.js';
-import { depthWindowCost, type DepthWindowResult } from './depths.js';
+import { depthWindowCost, groupTilesByChunk, type DepthWindowResult, type TileGroup } from './depths.js';
 import type {
   TesseraOptions,
   StoreMetadata,
@@ -71,6 +71,16 @@ export interface LoadChunksOptions {
    * @param chunk - The chunk that just completed.
    */
   onProgress?: (loaded: number, total: number, chunk: ChunkRef) => void;
+
+  /**
+   * Embedding dimensions to load, from {@link TesseraSource.depths}.
+   *
+   * @remarks
+   * Defaults to the store's full depth. A value differing from the live
+   * region's width discards that region and reloads at the new depth, since
+   * one buffer cannot hold two widths — that is how an upgrade happens.
+   */
+  depth?: number;
 }
 
 /**
@@ -120,6 +130,11 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
   /** The current embedding region, or `null` if no chunks are loaded. */
   get embeddingRegion(): EmbeddingRegion | null {
     return this._embeddingRegion;
+  }
+
+  /** Dimensions the live region was loaded at, or `null` if none is loaded. */
+  get regionDepth(): number | null {
+    return this._embeddingRegion?.nBands ?? null;
   }
 
   /** Store metadata, available after {@link open}. */
@@ -213,8 +228,16 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
       if (cj > cjMax) cjMax = cj;
     }
 
+    const depth = opts?.depth ?? this.store.meta.nBands;
+    // A different width means a different buffer: drop the old region rather
+    // than mixing depths in one allocation.
+    if (this._embeddingRegion && this._embeddingRegion.nBands !== depth) {
+      this.debug('info', `Reloading region at ${depth}d (was ${this._embeddingRegion.nBands}d)`);
+      this.clearRegion();
+    }
+
     // Create or grow the region
-    this.ensureRegion(ciMin, ciMax, cjMin, cjMax);
+    this.ensureRegion(ciMin, ciMax, cjMin, cjMax, depth);
 
     const total = chunks.length;
     this.debug('fetch', `Region download started: ${total} tiles [${ciMin},${ciMax}]x[${cjMin},${cjMax}]`);
@@ -223,35 +246,40 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     let succeeded = 0;
     const concurrency = this.concurrency;
 
-    let cursor = 0;
-    const next = async (): Promise<void> => {
-      while (cursor < total) {
-        if (abort.signal.aborted || opts?.signal?.aborted) return;
-
-        const idx = cursor++;
-        const { ci, cj } = chunks[idx];
-        if (this.regionHasTile(ci, cj)) {
-          succeeded++;
-          loaded++;
-          opts?.onProgress?.(loaded, total, chunks[idx]);
-          this.emit('loading', { total, done: loaded });
-          continue;
-        }
-        try {
-          await this.loadSingleChunk(ci, cj, abort.signal);
-          succeeded++;
-        } catch (err) {
-          if ((err as Error).name === 'AbortError') return;
-          this.debug('error', `Failed to load chunk (${ci},${cj}): ${(err as Error).message}`);
-        }
+    // Report a whole group at once: at shallow depths one read satisfies
+    // several tiles, and progress counts tiles.
+    const report = (group: TileGroup, ok: boolean) => {
+      for (const tile of group.tiles) {
+        if (ok) succeeded++;
         loaded++;
-        opts?.onProgress?.(loaded, total, chunks[idx]);
+        opts?.onProgress?.(loaded, total, tile);
         this.emit('loading', { total, done: loaded });
       }
     };
 
+    const groups = await this.planReads(chunks, depth);
+    let cursor = 0;
+    const next = async (): Promise<void> => {
+      while (cursor < groups.length) {
+        if (abort.signal.aborted || opts?.signal?.aborted) return;
+
+        const group = groups[cursor++];
+        const missing = group.tiles.filter(t => !this.regionHasTile(t.ci, t.cj));
+        if (missing.length === 0) { report(group, true); continue; }
+
+        try {
+          await this.loadTileGroup({ ...group, tiles: missing }, depth, abort.signal);
+          report(group, true);
+        } catch (err) {
+          if ((err as Error).name === 'AbortError') return;
+          this.debug('error', `Failed to load tiles at [${group.r0},${group.c0}]: ${(err as Error).message}`);
+          report(group, false);
+        }
+      }
+    };
+
     const workers = Array.from(
-      { length: Math.min(concurrency, total) },
+      { length: Math.min(concurrency, groups.length) },
       () => next(),
     );
     await Promise.all(workers);
@@ -861,11 +889,15 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     const { depth, r0, c0, height, width, signal } = opts;
     if (height <= 0 || width <= 0) return null;
 
-    const descriptor = (this.store.meta.geoemb_depths ?? [])
+    const declared = (this.store.meta.geoemb_depths ?? [])
       .find(d => d.dimensions === depth);
-    if (!descriptor) return null;
+    // Full depth is always readable from the array the store opened with,
+    // even on a store that declares no depths at all.
+    const arrayName = declared?.array
+      ?? (depth === this.store.meta.nBands ? 'embeddings' : null);
+    if (!arrayName) return null;
 
-    const arr = await this.getDepthArray(descriptor.array);
+    const arr = await this.getDepthArray(arrayName);
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     const t = this.store.meta.timeIndex ?? 0;
@@ -1063,6 +1095,104 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
   // ---------------------------------------------------------------------------
 
   /**
+   * Decide which reads satisfy a set of tiles at a given depth.
+   *
+   * @remarks
+   * On NCHW stores the array being read has its own chunk grid — coarser the
+   * shallower the depth — so tiles are batched into whole chunks and each is
+   * decoded once. At full depth chunk and tile coincide, giving one tile per
+   * read exactly as before. HWB stores have no depth arrays, so each tile is
+   * its own read and {@link loadTileGroup} routes them to the legacy path.
+   */
+  private async planReads(chunks: ChunkRef[], depth: number): Promise<TileGroup[]> {
+    const meta = this.store!.meta;
+    const [tileH, tileW] = meta.chunkShape;
+
+    if (meta.version !== 'v2') {
+      return chunks.map(tile => ({
+        r0: tile.ci * tileH, c0: tile.cj * tileW,
+        height: tileH, width: tileW, tiles: [tile],
+      }));
+    }
+
+    const name = (meta.geoemb_depths ?? []).find(d => d.dimensions === depth)?.array
+      ?? 'embeddings';
+    const arr = await this.getDepthArray(name);
+    const arrChunks = arr.chunks as number[];
+
+    return groupTilesByChunk(
+      chunks, tileH, tileW,
+      arrChunks[2], arrChunks[3],
+      meta.shape[0], meta.shape[1],
+    );
+  }
+
+  /**
+   * Read one chunk of the depth array and scatter it across the tiles it covers.
+   *
+   * @remarks
+   * The region keeps its own tile grid whatever the depth, so a read spanning
+   * several tiles is split back into them here. Tiles falling outside the
+   * region, or rows and columns past the array edge, are skipped rather than
+   * written at a wrapped offset.
+   */
+  private async loadTileGroup(
+    group: TileGroup,
+    depth: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const region = this._embeddingRegion;
+    if (!region) return;
+
+    // HWB stores keep the original per-tile path: their layout differs and
+    // they never carry depth arrays.
+    if (this.store!.meta.version !== 'v2') {
+      for (const { ci, cj } of group.tiles) await this.loadSingleChunk(ci, cj, signal);
+      return;
+    }
+
+    for (const tile of group.tiles) {
+      this.emit('embedding-progress', {
+        ci: tile.ci, cj: tile.cj, stage: 'fetching',
+        bytes: group.height * group.width * depth / group.tiles.length,
+      });
+    }
+
+    const block = await this.fetchDepthWindow({
+      depth,
+      r0: group.r0, c0: group.c0,
+      height: group.height, width: group.width,
+      signal,
+    });
+    if (!block) throw new Error(`depth ${depth} is not readable from this store`);
+
+    const { tileH, tileW } = region;
+    for (const { ci, cj } of group.tiles) {
+      const tIdx = (ci - region.ciMin) * region.gridCols + (cj - region.cjMin);
+      if (tIdx < 0 || tIdx >= region.loaded.length) continue;
+
+      const rowOff = ci * tileH - block.r0;
+      const colOff = cj * tileW - block.c0;
+
+      for (let row = 0; row < tileH; row++) {
+        const srcRow = rowOff + row;
+        if (srcRow < 0 || srcRow >= block.height) continue;
+        for (let col = 0; col < tileW; col++) {
+          const srcCol = colOff + col;
+          if (srcCol < 0 || srcCol >= block.width) continue;
+          const src = (srcRow * block.width + srcCol) * depth;
+          const dst = (tIdx * tileH * tileW + row * tileW + col) * depth;
+          for (let b = 0; b < depth; b++) region.emb[dst + b] = block.emb[src + b];
+        }
+      }
+
+      region.loaded[tIdx] = 1;
+      this.emit('chunk-loaded', { ci, cj });
+      this.emit('embeddings-loaded', { ci, cj });
+    }
+  }
+
+  /**
    * Load and dequantise a single chunk into the embedding region.
    */
   private async loadSingleChunk(
@@ -1165,10 +1295,10 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     ciMax: number,
     cjMin: number,
     cjMax: number,
+    nBands: number = this.store?.meta.nBands ?? 0,
   ): void {
     if (!this.store) return;
     const cs = this.store.meta.chunkShape;
-    const nBands = this.store.meta.nBands;
     const tileH = cs[0], tileW = cs[1];
 
     const old = this._embeddingRegion;
