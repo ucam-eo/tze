@@ -487,6 +487,10 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
    * @param polygon - A GeoJSON Polygon (outer ring used).
    */
   getChunksInRegion(polygon: GeoJSON.Polygon): ChunkRef[] {
+    // NOTE: tiles already in the region are omitted — this answers "what is
+    // still missing", so a fully loaded polygon yields an empty list. Callers
+    // that want the tiles a region covers regardless of load state must track
+    // them, or clear the region first.
     if (!this.store || !this.proj) return [];
 
     // Convert polygon ring to UTM coordinates

@@ -172,6 +172,26 @@ export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false 
 }
 
 /**
+ * The tiles a region owns, from the keys recorded when it loaded.
+ *
+ * @remarks
+ * Not `getChunksInRegion`: that answers "what is still missing" and skips
+ * tiles already in the region, so for a fully loaded region it returns
+ * nothing. Reloading at a new depth needs the tiles the region *has*.
+ */
+function chunksOfRegion(region: RoiRegion): { zoneId: string; ci: number; cj: number }[] {
+  const chunks: { zoneId: string; ci: number; cj: number }[] = [];
+  for (const key of region.chunkKeys) {
+    const sep = key.lastIndexOf(':');
+    if (sep < 0) continue;
+    const [ci, cj] = key.slice(sep + 1).split('_').map(Number);
+    if (Number.isNaN(ci) || Number.isNaN(cj)) continue;
+    chunks.push({ zoneId: key.slice(0, sep), ci, cj });
+  }
+  return chunks;
+}
+
+/**
  * Reload every region at the store's full depth and refresh what was derived
  * from the shallow one.
  *
@@ -213,7 +233,11 @@ export async function upgradeRegions(): Promise<void> {
     const regions = get(roiRegions);
     for (const region of regions) {
       const geometry = region.feature.geometry as GeoJSON.Polygon;
-      const managedChunks = await sm.getChunksInRegion(geometry);
+      // Tiles the region already holds; fall back to a lookup for a region
+      // that never finished loading.
+      const managedChunks = region.chunkKeys.length > 0
+        ? chunksOfRegion(region)
+        : await sm.getChunksInRegion(geometry);
       if (managedChunks.length === 0) continue;
       await loadManagedChunks(managedChunks, geometry, full);
       reloaded += managedChunks.length;
