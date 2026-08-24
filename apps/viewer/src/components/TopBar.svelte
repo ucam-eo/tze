@@ -317,7 +317,9 @@
     }
     if ($roiLoading) {
       const at = $loadDepth ? ` at d${$loadDepth}` : '';
-      return { text: `Loading ${$roiLoading.loaded}/${$roiLoading.total}${at}`, color: 'text-term-cyan' };
+      // total is 0 until the chunk lookup finishes.
+      const count = $roiLoading.total > 0 ? ` ${$roiLoading.loaded}/${$roiLoading.total}` : '';
+      return { text: `Loading${count}${at}`, color: 'text-term-cyan' };
     }
     if ($roiTileCount === 0) return { text: 'Draw a region to load embeddings', color: 'text-gray-500' };
     if ($activeTool === 'similarity') {
@@ -405,7 +407,8 @@
     {#if $roiLoading}
       <div class="w-12 h-1 bg-gray-800 rounded-full overflow-hidden shrink-0">
         <div class="h-full bg-term-cyan/70 rounded-full transition-all"
-          style="width: {($roiLoading.loaded / $roiLoading.total) * 100}%"></div>
+          class:animate-pulse={$roiLoading.total === 0}
+          style="width: {$roiLoading.total > 0 ? ($roiLoading.loaded / $roiLoading.total) * 100 : 100}%"></div>
       </div>
     {/if}
   </div>
@@ -611,11 +614,14 @@
               <span class="text-term-cyan">
                 Loading{$loadDepth ? ` at d${$loadDepth}` : ''}…
               </span>
-              <span class="text-gray-500 tabular-nums">{$roiLoading.loaded}/{$roiLoading.total}</span>
+              <span class="text-gray-500 tabular-nums">
+                {$roiLoading.total > 0 ? `${$roiLoading.loaded}/${$roiLoading.total}` : 'preparing'}
+              </span>
             </div>
             <div class="w-full h-1 bg-gray-800 rounded-full overflow-hidden">
               <div class="h-full bg-term-cyan/70 rounded-full"
-                style="width: {($roiLoading.loaded / $roiLoading.total) * 100}%"></div>
+                class:animate-pulse={$roiLoading.total === 0}
+                style="width: {$roiLoading.total > 0 ? ($roiLoading.loaded / $roiLoading.total) * 100 : 100}%"></div>
             </div>
           </div>
         {/if}

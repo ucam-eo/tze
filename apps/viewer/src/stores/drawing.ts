@@ -70,6 +70,14 @@ async function loadManagedChunks(
     arr.push({ ci, cj });
   }
 
+  // Resolve the display sources first: startRegionAnimation is a silent no-op
+  // for a zone whose display source has not been created yet, which is how an
+  // upgrade — or a first draw in a fresh zone — could run with no animation.
+  const displaySources = new Map<string, Awaited<ReturnType<NonNullable<typeof dm>['getDisplaySource']>> | null>();
+  for (const zoneId of byZone.keys()) {
+    displaySources.set(zoneId, dm ? await dm.getDisplaySource(zoneId) : null);
+  }
+
   if (dm) {
     for (const [zoneId, chunks] of byZone) {
       dm.startRegionAnimation(zoneId, geometry, chunks, depth);
@@ -82,7 +90,7 @@ async function loadManagedChunks(
   let rafId = 0;
 
   for (const [zoneId, chunks] of byZone) {
-    const displaySrc = dm ? await dm.getDisplaySource(zoneId) : null;
+    const displaySrc = displaySources.get(zoneId) ?? null;
     const baseLoaded = globalLoaded;
     if (displaySrc) {
       await displaySrc.loadChunkBatch(chunks, (loaded, _t, ci, cj) => {
@@ -180,6 +188,8 @@ export async function upgradeRegions(): Promise<void> {
 
   loadDepth.set(full);
   segmentPolygons.set({ type: 'FeatureCollection', features: [] });
+  // The chunk lookup below can take a moment; show the load as started now.
+  roiLoading.set({ loaded: 0, total: 0 });
 
   for (const region of get(roiRegions)) {
     if (region.depth === full) continue;

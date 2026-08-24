@@ -866,6 +866,8 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
    * @param opts.c0 - First column of the window.
    * @param opts.height - Window height in pixels.
    * @param opts.width - Window width in pixels.
+   * @param opts.timeIndex - Year to read, as an index into
+   *   {@link StoreMetadata.years}. Defaults to the store's active year.
    * @param opts.signal - Optional abort signal.
    * @returns Dequantised embeddings and what the read cost, or `null` if the
    *   store is closed, offers no such depth, or the window is empty.
@@ -883,6 +885,7 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     c0: number;
     height: number;
     width: number;
+    timeIndex?: number;
     signal?: AbortSignal;
   }): Promise<DepthWindowResult | null> {
     if (!this.store) return null;
@@ -900,7 +903,7 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     const arr = await this.getDepthArray(arrayName);
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-    const t = this.store.meta.timeIndex ?? 0;
+    const t = opts.timeIndex ?? this.store.meta.timeIndex ?? 0;
     const r1 = r0 + height;
     const c1 = c0 + width;
 

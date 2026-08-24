@@ -4,6 +4,7 @@
   import { explorerPinned, explorerTileEmb, explorerPixel, YEAR_COLORS } from '../stores/zarr-explorer';
   import FloatingWindow from './FloatingWindow.svelte';
   import MatryoshkaPanel from './MatryoshkaPanel.svelte';
+  import TileTimelapse from './TileTimelapse.svelte';
   import { get } from 'svelte/store';
 
   // --- Animated fingerprint canvas ---
@@ -599,7 +600,8 @@
     </div>
 
     {#if selected && hasDepths}
-      <div class="w-[340px] shrink-0">
+      <div class="w-[340px] shrink-0 space-y-3">
+        <TileTimelapse />
         <MatryoshkaPanel />
       </div>
     {/if}
