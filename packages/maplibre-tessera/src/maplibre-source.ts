@@ -34,6 +34,8 @@ export class MaplibreTesseraSource {
   private opts: ResolvedDisplayOptions;
   private map: MaplibreMap | null = null;
   private workerPool: WorkerPool | null = null;
+  /** Embedding width the running region animation reports. */
+  private regionAnimationDepth = 0;
   private chunkCache = new Map<string, CachedChunk>();
   private currentAbort: AbortController | null = null;
   private previewLayerId: string | null = null;
@@ -306,6 +308,7 @@ export class MaplibreTesseraSource {
   startRegionAnimation(
     polygon: GeoJSON.Polygon,
     chunks: { ci: number; cj: number }[],
+    depth?: number,
   ): void {
     if (!this.map || chunks.length === 0) return;
     this.stopRegionAnimation();
@@ -329,6 +332,7 @@ export class MaplibreTesseraSource {
       if (lat > north) north = lat;
     }
 
+    this.regionAnimationDepth = depth ?? 0;
     this.regionAnimation = new RegionLoadingAnimation({
       map: this.map as any,
       polygon: coords as [number, number][],
@@ -337,6 +341,7 @@ export class MaplibreTesseraSource {
       ciMin, ciMax, cjMin, cjMax,
       chunkCorners: (ci, cj) => this.chunkCorners(ci, cj),
     });
+    if (this.regionAnimationDepth) this.regionAnimation.setDepth(this.regionAnimationDepth);
     this.raiseOverlayLayers();
   }
 

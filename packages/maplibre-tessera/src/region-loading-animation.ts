@@ -263,6 +263,14 @@ export class RegionLoadingAnimation {
   private pendingUpdate = false;
   private labels = ['ACQUIRING', 'EMBEDDING', 'SCANNING', 'ANALYSING'];
 
+  /** Embedding dimensions being fetched, shown beside the tile count. */
+  private depth = 0;
+
+  /** Name the width this load is fetching at. */
+  setDepth(depth: number): void {
+    this.depth = depth;
+  }
+
   constructor(opts: RegionAnimationOpts) {
     this.map = opts.map;
     this.total = opts.chunks.length;
@@ -525,7 +533,8 @@ export class RegionLoadingAnimation {
     const countSize = Math.max(9, Math.round(fontSize * 0.3));
     ctx.font = `${countSize}px monospace`;
     ctx.fillStyle = 'rgba(0, 229, 255, 0.4)';
-    ctx.fillText(`${this.loaded}/${this.total} TILES`, 0, fontSize * 0.35 + countSize * 1.8);
+    const at = this.depth ? ` \u00b7 ${this.depth}D` : '';
+    ctx.fillText(`${this.loaded}/${this.total} TILES${at}`, 0, fontSize * 0.35 + countSize * 1.8);
 
     ctx.restore();
   }

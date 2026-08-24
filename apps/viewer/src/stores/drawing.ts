@@ -72,7 +72,7 @@ async function loadManagedChunks(
 
   if (dm) {
     for (const [zoneId, chunks] of byZone) {
-      dm.startRegionAnimation(zoneId, geometry, chunks);
+      dm.startRegionAnimation(zoneId, geometry, chunks, depth);
     }
   }
 

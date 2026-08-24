@@ -24,15 +24,26 @@ export const loadDepth = writable<number>(0);
 /** The store's full width, which an upgrade restores. */
 export const fullDepth = derived(metadata, $m => $m?.nBands ?? 0);
 
+/** Store the depth was last defaulted for, so a choice is not re-defaulted. */
+let defaultedFor: string | null = null;
+
 /**
  * Default the depth for a freshly opened store.
+ *
+ * @param storeUrl - Root URL of the store whose metadata just arrived.
  *
  * @remarks
  * 16 where offered: it keeps most of the scene structure the full vector
  * resolves (r=0.88 against the full-depth deviance map) for an eighth of the
  * bytes. Stores without depths load at their only width.
+ *
+ * Metadata arrives once per UTM zone, and zones open lazily as regions are
+ * drawn — so this must default only on the first zone of a store, or opening
+ * a second zone would quietly discard a depth the user had chosen.
  */
-export function resetLoadDepth(): void {
+export function resetLoadDepth(storeUrl: string): void {
+  if (defaultedFor === storeUrl) return;
+  defaultedFor = storeUrl;
   const depths = get(availableDepths);
   loadDepth.set(depths.includes(16) ? 16 : (get(fullDepth) || 0));
 }

@@ -7,7 +7,8 @@
   import { metadata, loading, networkActivity } from '../stores/zarr';
   import { mapInstance } from '../stores/map';
   import { get } from 'svelte/store';
-  import { roiDrawing, drawMode, roiRegions, roiLoading, roiTileCount, clearAllRegions, removeRegion, addRegion, type DrawMode } from '../stores/drawing';
+  import { roiDrawing, drawMode, roiRegions, roiLoading, roiTileCount, clearAllRegions, removeRegion, addRegion, upgradeRegions, type DrawMode } from '../stores/drawing';
+  import { availableDepths, loadDepth, fullDepth, estimateBytes, formatBytes } from '../stores/depth';
   import { activeTool, type ToolId } from '../stores/tools';
   import { simSelectedPixel } from '../stores/similarity';
   import { displayManager } from '../stores/zarr';
@@ -223,6 +224,25 @@
 
   // --- Regions dropdown ---
   let regionsOpen = $state(false);
+  let upgrading = $state(false);
+
+  /** Regions loaded below full depth, which an upgrade would widen. */
+  const shallowRegions = $derived(
+    $roiRegions.filter(r => r.depth && $fullDepth && r.depth < $fullDepth),
+  );
+
+  /** Decoded size of re-reading every shallow region at full depth. */
+  const upgradeBytes = $derived.by(() => {
+    const cs = $metadata?.chunkShape;
+    if (!cs || !$fullDepth) return 0;
+    const tiles = shallowRegions.reduce((n, r) => n + r.chunkKeys.length, 0);
+    return estimateBytes(tiles, cs[0], cs[1], $fullDepth);
+  });
+
+  async function runUpgrade() {
+    upgrading = true;
+    try { await upgradeRegions(); } finally { upgrading = false; }
+  }
   let fileInput: HTMLInputElement;
 
   function featureBbox(feature: GeoJSON.Feature): string {
@@ -295,7 +315,10 @@
       const hint = $drawMode === 'polygon' ? 'Click to draw polygon' : 'Drag to draw rectangle';
       return { text: hint, color: 'text-term-cyan animate-pulse' };
     }
-    if ($roiLoading) return { text: `Loading ${$roiLoading.loaded}/${$roiLoading.total}`, color: 'text-term-cyan' };
+    if ($roiLoading) {
+      const at = $loadDepth ? ` at d${$loadDepth}` : '';
+      return { text: `Loading ${$roiLoading.loaded}/${$roiLoading.total}${at}`, color: 'text-term-cyan' };
+    }
     if ($roiTileCount === 0) return { text: 'Draw a region to load embeddings', color: 'text-gray-500' };
     if ($activeTool === 'similarity') {
       return $simSelectedPixel
@@ -488,6 +511,24 @@
                   bg-gray-950 border border-gray-700/80 rounded shadow-xl
                   min-w-[260px] p-2 space-y-2">
 
+        {#if $availableDepths.length > 1}
+          <div class="flex items-center gap-1 pb-1 border-b border-gray-800/60">
+            <span class="text-[9px] text-gray-500 shrink-0"
+                  title="Embedding dimensions new regions load at">Detail</span>
+            {#each $availableDepths as d}
+              <button
+                onclick={() => loadDepth.set(d)}
+                class="px-1.5 py-0.5 rounded text-[9px] border transition-colors
+                       {$loadDepth === d
+                         ? 'text-term-cyan border-term-cyan/40 bg-term-cyan/10'
+                         : 'text-gray-500 border-gray-700/60 hover:text-gray-300'}"
+              >d{d}</button>
+            {/each}
+            <span class="flex-1"></span>
+            <span class="text-[8px] text-gray-600">{$loadDepth === $fullDepth ? 'full' : 'faster'}</span>
+          </div>
+        {/if}
+
         {#if $roiRegions.length === 0}
           <div class="text-[10px] text-gray-600 px-1 py-2 text-center">
             No regions yet. Use the draw tools to select an area.
@@ -505,7 +546,10 @@
                   <div class="text-gray-600 truncate" title={featureBbox(region.feature)}>
                     {featureBbox(region.feature)}
                   </div>
-                  <div class="text-gray-600">{region.chunkKeys.length} tiles</div>
+                  <div class="text-gray-600">
+                    {region.chunkKeys.length} tiles
+                    {#if region.depth}<span class="text-gray-700">&middot; d{region.depth}</span>{/if}
+                  </div>
                 </div>
                 <button
                   onclick={(e) => { e.stopPropagation(); removeRegion(region.id); }}
@@ -517,6 +561,21 @@
               </div>
             {/each}
           </div>
+
+          {#if shallowRegions.length > 0}
+            <button
+              onclick={runUpgrade}
+              disabled={upgrading}
+              class="w-full text-[9px] px-2 py-1 rounded transition-colors
+                     bg-term-cyan/10 text-term-cyan border border-term-cyan/30
+                     hover:bg-term-cyan/20 disabled:opacity-50 disabled:cursor-wait"
+              title="Reload at full depth and rerun the current analysis"
+            >
+              {upgrading
+                ? `Reloading at d${$fullDepth}…`
+                : `Upgrade to d${$fullDepth} — ${formatBytes(upgradeBytes)}`}
+            </button>
+          {/if}
         {/if}
 
         <div class="flex items-center gap-1 pt-1 border-t border-gray-800/60">
@@ -549,7 +608,9 @@
         {#if $roiLoading}
           <div class="space-y-1 pt-1 border-t border-gray-800/60">
             <div class="flex justify-between text-[9px]">
-              <span class="text-term-cyan">Loading...</span>
+              <span class="text-term-cyan">
+                Loading{$loadDepth ? ` at d${$loadDepth}` : ''}…
+              </span>
               <span class="text-gray-500 tabular-nums">{$roiLoading.loaded}/{$roiLoading.total}</span>
             </div>
             <div class="w-full h-1 bg-gray-800 rounded-full overflow-hidden">
@@ -621,7 +682,7 @@
         aria-hidden="true"
       >
         <span class="text-[9px] text-term-cyan/80 tabular-nums text-center leading-none">
-          {$loading.done}/{$loading.total}
+          {$loading.done}/{$loading.total}{$loadDepth ? ` · d${$loadDepth}` : ''}
         </span>
         <div class="h-0.5 bg-gray-800 rounded-full overflow-hidden">
           <div class="h-full bg-term-cyan/70 rounded-full transition-all duration-150"

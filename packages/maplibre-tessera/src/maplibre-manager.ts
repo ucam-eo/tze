@@ -144,8 +144,9 @@ export class MaplibreTesseraManager {
     zoneId: string,
     polygon: GeoJSON.Polygon,
     chunks: { ci: number; cj: number }[],
+    depth?: number,
   ): void {
-    this.displaySources.get(zoneId)?.startRegionAnimation(polygon, chunks);
+    this.displaySources.get(zoneId)?.startRegionAnimation(polygon, chunks, depth);
   }
 
   /** Update animation progress on the named zone. */

@@ -176,7 +176,7 @@ export async function initManager(initialZoneId?: string): Promise<void> {
 
     sm.on('metadata-loaded', (meta) => {
       metadata.set(meta);
-      resetLoadDepth();
+      resetLoadDepth(get(catalogUrl));
       status.set(`Loaded: zone ${meta.utmZone}`);
     });
     sm.on('loading', reportLoading);
