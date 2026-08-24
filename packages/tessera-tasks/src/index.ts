@@ -22,6 +22,7 @@ export {
   prefixMaxDiff,
   meanAbsDiff,
   blockNormMap,
+  percentileRange,
   bandRanges,
   scalarRange,
   rgbaFromBands,

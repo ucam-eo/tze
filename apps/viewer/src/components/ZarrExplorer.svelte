@@ -601,8 +601,8 @@
 
     {#if selected && hasDepths}
       <div class="w-[340px] shrink-0 space-y-3">
-        <TileTimelapse />
         <MatryoshkaPanel />
+        <TileTimelapse />
       </div>
     {/if}
   </div>

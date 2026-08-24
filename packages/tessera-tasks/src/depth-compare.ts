@@ -306,6 +306,35 @@ export function bandRanges(
   });
 }
 
+/**
+ * Value range between two percentiles, ignoring NaN.
+ *
+ * @param loPct - Lower percentile, 0–100.
+ * @param hiPct - Upper percentile, 0–100.
+ * @returns The trimmed range, or `{ min: 0, max: 1 }` if nothing is scored.
+ *
+ * @remarks
+ * Comparing how much a map varies is easily wrecked by a single extreme
+ * pixel — a zero-length vector puts the minimum at 0 and makes any ratio
+ * infinite. Trimming the tails describes the bulk of the window instead.
+ */
+export function percentileRange(
+  values: Float32Array,
+  loPct: number,
+  hiPct: number,
+): BandRange {
+  const scored: number[] = [];
+  for (let i = 0; i < values.length; i++) if (!isNaN(values[i])) scored.push(values[i]);
+  if (scored.length === 0) return { min: 0, max: 1 };
+
+  scored.sort((a, b) => a - b);
+  const at = (pct: number) => {
+    const idx = Math.round((pct / 100) * (scored.length - 1));
+    return scored[Math.max(0, Math.min(scored.length - 1, idx))];
+  };
+  return { min: at(loPct), max: at(hiPct) };
+}
+
 /** Value range spanning several scalar maps, ignoring NaN. */
 export function scalarRange(maps: Float32Array[]): BandRange {
   let min = Infinity, max = -Infinity;

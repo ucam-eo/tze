@@ -8,6 +8,7 @@ import {
   prefixMaxDiff,
   meanAbsDiff,
   blockNormMap,
+  percentileRange,
   bandRanges,
   scalarRange,
   rgbaFromBands,
@@ -214,6 +215,30 @@ describe('bandRanges', () => {
       { min: 5, max: 7 },
       { min: 2, max: 2 },
     ]);
+  });
+});
+
+describe('percentileRange', () => {
+  it('trims the extremes so one outlier cannot set the range', () => {
+    // 0 and 1000 are the outliers; the bulk sits between 10 and 20.
+    const values = new Float32Array([0, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 1000]);
+    const range = percentileRange(values, 10, 90);
+    expect(range.min).toBeGreaterThan(0);
+    expect(range.max).toBeLessThan(1000);
+  });
+
+  it('ignores NaN entries', () => {
+    const range = percentileRange(new Float32Array([NaN, 1, 2, 3, NaN]), 0, 100);
+    expect(range).toEqual({ min: 1, max: 3 });
+  });
+
+  it('spans the whole set at 0 and 100', () => {
+    const range = percentileRange(new Float32Array([5, 1, 3]), 0, 100);
+    expect(range).toEqual({ min: 1, max: 5 });
+  });
+
+  it('falls back to 0..1 when nothing is scored', () => {
+    expect(percentileRange(new Float32Array([NaN]), 5, 95)).toEqual({ min: 0, max: 1 });
   });
 });
 

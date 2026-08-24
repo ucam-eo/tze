@@ -16,7 +16,8 @@
   import { explorerPinned } from '../stores/zarr-explorer';
   import { alignDepthWindow, type DepthWindow, type DepthWindowResult } from '@ucam-eo/tessera';
   import {
-    blockNormMap, bandRanges, scalarRange, rgbaFromBands, rgbaFromScalar,
+    blockNormMap, bandRanges, scalarRange, percentileRange,
+    rgbaFromBands, rgbaFromScalar,
   } from '@ucam-eo/tessera-tasks';
 
   /** Comparison window in pixels: one whole chunk at the shallowest depth. */
@@ -33,7 +34,7 @@
     bytes: number;
     /** Per-pixel structure of just those dimensions. */
     rgba: Uint8ClampedArray;
-    /** Ratio of the largest to smallest block length across the window. */
+    /** How much these dimensions vary across the window, as a ratio. */
     spread: number;
   }
 
@@ -107,12 +108,13 @@
         const from = i === 0 ? 0 : reads[i - 1].depth;
         const map = blockNormMap(full.emb, pixels, full.nBands, from, r.depth);
         const range = scalarRange([map]);
+        const bulk = percentileRange(map, 5, 95);
         return {
           label: i === 0 ? `d${r.depth}` : `+d${r.depth}`,
           dims: r.depth - from,
           bytes: r.result.bytes,
           rgba: rgbaFromScalar(map, range.min, range.max, CYAN),
-          spread: range.min > 0 ? range.max / range.min : Infinity,
+          spread: bulk.min > 0 ? bulk.max / bulk.min : 1,
         };
       });
 
@@ -143,6 +145,15 @@
   function formatBytes(bytes: number): string {
     if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
     return `${Math.round(bytes / 1024)} KB`;
+  }
+
+  /** Widest spread among the tiers, which scales the bars. */
+  const maxSpread = $derived(tiers.reduce((m, t) => Math.max(m, t.spread), 1));
+
+  /** Bar length as a percentage: 0 where a tier varies not at all. */
+  function spreadBar(spread: number): number {
+    if (maxSpread <= 1) return 0;
+    return Math.max(0, Math.min(100, ((spread - 1) / (maxSpread - 1)) * 100));
   }
 
   const gridStyle = $derived(`grid-template-columns: repeat(${depths.length + 1}, minmax(0, 1fr))`);
@@ -192,10 +203,14 @@
               <div class="text-[8px] text-gray-500 tabular-nums">
                 {tier.dims} dims · {formatBytes(tier.bytes)}
               </div>
-              <div class="text-[8px] tabular-nums"
-                   class:text-term-cyan={tier.spread >= 3}
-                   class:text-gray-500={tier.spread < 3}>
-                spread {tier.spread.toFixed(1)}×
+              <div class="space-y-0.5" title="How much these dimensions vary from pixel to pixel across the window. A short bar means they are nearly the same everywhere, so dropping them costs little.">
+                <div class="h-1 rounded-full bg-gray-800 overflow-hidden">
+                  <div class="h-full rounded-full bg-term-cyan/70"
+                       style="width: {spreadBar(tier.spread)}%"></div>
+                </div>
+                <div class="text-[8px] tabular-nums text-gray-500">
+                  {tier.spread.toFixed(1)}× spread
+                </div>
               </div>
             </div>
           {/each}
