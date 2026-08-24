@@ -21,6 +21,16 @@ export const availableDepths = derived(metadata, $m => {
 /** Dimensions new region loads fetch. */
 export const loadDepth = writable<number>(0);
 
+/**
+ * Dimensions the loaded regions actually hold.
+ *
+ * @remarks
+ * Distinct from {@link loadDepth}, which is only a setting for the next load.
+ * This is what similarity, classification and UMAP are reading right now, so
+ * it is what the UI should report.
+ */
+export const loadedDepth = writable<number>(0);
+
 /** The store's full width, which an upgrade restores. */
 export const fullDepth = derived(metadata, $m => $m?.nBands ?? 0);
 

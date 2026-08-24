@@ -8,7 +8,7 @@
   import { mapInstance } from '../stores/map';
   import { get } from 'svelte/store';
   import { roiDrawing, drawMode, roiRegions, roiLoading, roiTileCount, clearAllRegions, removeRegion, addRegion, upgradeRegions, type DrawMode } from '../stores/drawing';
-  import { availableDepths, loadDepth, fullDepth, estimateBytes, formatBytes } from '../stores/depth';
+  import { availableDepths, loadDepth, loadedDepth, fullDepth, estimateBytes, formatBytes } from '../stores/depth';
   import { activeTool, type ToolId } from '../stores/tools';
   import { simSelectedPixel } from '../stores/similarity';
   import { displayManager } from '../stores/zarr';
@@ -322,6 +322,13 @@
       return { text: `Loading${count}${at}`, color: 'text-term-cyan' };
     }
     if ($roiTileCount === 0) return { text: 'Draw a region to load embeddings', color: 'text-gray-500' };
+    if ($loadedDepth && $availableDepths.length > 1) {
+      const full = $loadedDepth === $fullDepth;
+      return {
+        text: `${$roiTileCount} tiles at d${$loadedDepth}${full ? '' : ' — upgradeable'}`,
+        color: full ? 'text-gray-400' : 'text-amber-400/80',
+      };
+    }
     if ($activeTool === 'similarity') {
       return $simSelectedPixel
         ? { text: 'Similarity search active', color: 'text-purple-400' }

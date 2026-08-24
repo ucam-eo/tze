@@ -282,15 +282,21 @@
   // Trigger UMAP when tile count changes or initial load.
   // On subsequent reference pixel changes (simScores), just recolor.
   let umapTimer: ReturnType<typeof setTimeout> | undefined;
+  let lastUmapDepth = 0;
   $effect(() => {
     const _s = $simScores;
     const _t = $simEmbeddingTileCount;
     const loading = $roiLoading;
     clearTimeout(umapTimer);
+    // An upgrade reloads the same tiles at a wider depth, so the tile count
+    // alone cannot tell new data from old: the cached sample would still hold
+    // the shallow vectors.
+    const depth = get(sourceManager)?.regionDepth ?? 0;
     if (_t > 0 && !loading) {
-      // Only rerun full UMAP if tile count changed (new data loaded)
-      if (_t !== lastUmapTileCount) {
+      // Only rerun full UMAP if tile count or depth changed (new data loaded)
+      if (_t !== lastUmapTileCount || depth !== lastUmapDepth) {
         lastUmapTileCount = _t;
+        lastUmapDepth = depth;
         umapTimer = setTimeout(runUmap, 60);
       } else if (cachedSampleEmb && renderer) {
         // Same tiles, new reference pixel — just recolor

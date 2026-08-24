@@ -240,7 +240,7 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     this.ensureRegion(ciMin, ciMax, cjMin, cjMax, depth);
 
     const total = chunks.length;
-    this.debug('fetch', `Region download started: ${total} tiles [${ciMin},${ciMax}]x[${cjMin},${cjMax}]`);
+    this.debug('fetch', `Region download started: ${total} tiles at ${depth}d [${ciMin},${ciMax}]x[${cjMin},${cjMax}]`);
 
     let loaded = 0;
     let succeeded = 0;
@@ -284,7 +284,7 @@ export class TesseraSource extends EventEmitter<TesseraEvents> {
     );
     await Promise.all(workers);
 
-    this.debug('fetch', `Region download complete: ${succeeded}/${total} tiles loaded`);
+    this.debug('fetch', `Region download complete: ${succeeded}/${total} tiles at ${depth}d`);
 
     if (this.currentAbort === abort) {
       this.currentAbort = null;

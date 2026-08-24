@@ -1,7 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { sourceManager, displayManager, metadata } from './zarr';
 import { simEmbeddingTileCount, simRefEmbedding, simSelectedPixel } from './similarity';
-import { loadDepth, fullDepth, estimateBytes, formatBytes } from './depth';
+import { loadDepth, loadedDepth, fullDepth, estimateBytes, formatBytes } from './depth';
 import { labels } from './classifier';
 import { segmentPolygons } from './segmentation';
 
@@ -114,6 +114,8 @@ async function loadManagedChunks(
     dm.stopRegionAnimation();
     dm.recolorAllChunks();
   }
+
+  loadedDepth.set(get(sourceManager)?.regionDepth ?? 0);
 }
 
 /** Called when terra-draw finishes a shape. Starts loading chunks for the region.
