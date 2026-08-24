@@ -171,15 +171,32 @@
     {/if}
 
     {#if current && win}
-      <div class="relative w-full aspect-square rounded overflow-hidden border border-gray-800/60 bg-gray-950">
+      <button
+        type="button"
+        onclick={() => { playing = !playing; }}
+        disabled={frames.length < 2}
+        title={playing ? 'Pause' : 'Resume'}
+        class="relative block w-full aspect-square rounded overflow-hidden
+               border border-gray-800/60 bg-gray-950 disabled:cursor-default
+               {frames.length > 1 ? 'cursor-pointer hover:border-term-cyan/40 transition-colors' : ''}"
+      >
         <canvas
           use:paint={{ rgba: current.rgba, w: win.width, h: win.height }}
           class="w-full h-full block pixelated"
         ></canvas>
+        {#if !playing && frames.length > 1}
+          <!-- Selecting a year pauses; say plainly how to start again. -->
+          <span class="absolute inset-0 flex items-center justify-center bg-black/30">
+            <span class="flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/75
+                         text-[9px] text-term-cyan">
+              <Play size={9} /> Resume
+            </span>
+          </span>
+        {/if}
         <span class="absolute bottom-1 right-1 px-1 rounded bg-black/70 text-[10px] text-term-cyan tabular-nums">
           {current.year}
         </span>
-      </div>
+      </button>
 
       <div class="flex flex-wrap gap-0.5">
         {#each frames as frame, i (frame.year)}

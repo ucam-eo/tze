@@ -16,8 +16,7 @@
   import { explorerPinned } from '../stores/zarr-explorer';
   import { alignDepthWindow, type DepthWindow, type DepthWindowResult } from '@ucam-eo/tessera';
   import {
-    devianceMap, blockNormMap, pearson, bandRanges, scalarRange,
-    rgbaFromBands, rgbaFromScalar,
+    blockNormMap, bandRanges, scalarRange, rgbaFromBands, rgbaFromScalar,
   } from '@ucam-eo/tessera-tasks';
 
   /** Comparison window in pixels: one whole chunk at the shallowest depth. */
@@ -38,17 +37,7 @@
     spread: number;
   }
 
-  /** What a read at one depth can resolve, cumulatively. */
-  interface Level {
-    depth: number;
-    bytes: number;
-    rgba: Uint8ClampedArray;
-    /** Correlation of this depth's deviance map with the full-depth one. */
-    r: number;
-  }
-
   let tiers = $state<Tier[]>([]);
-  let levels = $state<Level[]>([]);
   let preview = $state<Uint8ClampedArray | null>(null);
   let win = $state<DepthWindow | null>(null);
   let loading = $state(false);
@@ -57,7 +46,6 @@
 
   const depths = $derived($metadata?.geoemb_depths?.map(d => d.dimensions) ?? []);
   const selected = $derived($explorerPinned);
-  const deepest = $derived(depths.length > 0 ? depths[depths.length - 1] : 0);
   // Identity of the selected shard. Dwelling on the map rewrites the selection
   // store with an equal value, which must not discard a finished comparison.
   const selectionKey = $derived(selected ? `${selected.zoneId}:${selected.ci}_${selected.cj}` : '');
@@ -83,7 +71,6 @@
     win = null;
     error = '';
     tiers = [];
-    levels = [];
     preview = null;
 
     try {
@@ -128,17 +115,6 @@
           spread: range.min > 0 ? range.max / range.min : Infinity,
         };
       });
-
-      // What each depth resolves cumulatively, on a scale shared across depths.
-      const devMaps = reads.map(r => devianceMap(r.result.emb, pixels, r.result.nBands));
-      const devRange = scalarRange(devMaps);
-      const fullDev = devMaps[devMaps.length - 1];
-      levels = reads.map((r, i) => ({
-        depth: r.depth,
-        bytes: r.result.bytes,
-        rgba: rgbaFromScalar(devMaps[i], devRange.min, devRange.max, CYAN),
-        r: pearson(devMaps[i], fullDev),
-      }));
 
       win = w;
     } catch (err) {
@@ -186,10 +162,6 @@
     {/if}
 
     {#if tiers.length > 0 && win}
-      <div class="text-[9px] text-gray-600 tabular-nums">
-        {win.width}×{win.height} px window at [{win.r0}, {win.c0}]
-      </div>
-
       <!-- The picture first, then the dimensions each depth adds over the one
            below it. The picture reads only bands 0-2, so no depth changes it. -->
       <div class="space-y-1">
@@ -230,29 +202,6 @@
         </div>
       </div>
 
-      <!-- Cumulative: what a read at each depth can resolve -->
-      <div class="space-y-1 border-t border-gray-800/40 pt-1.5">
-        <div class="text-[9px] text-gray-500">Scene structure resolved</div>
-        <div class="grid gap-1" style={gridStyle}>
-          <div></div>
-          {#each levels as level (level.depth)}
-            <div class="space-y-0.5">
-              <div class="w-full aspect-square rounded overflow-hidden border border-gray-800/60 bg-gray-950">
-                <canvas
-                  use:paint={{ rgba: level.rgba, w: win.width, h: win.height }}
-                  class="w-full h-full block pixelated"
-                ></canvas>
-              </div>
-              <div class="text-[9px] text-gray-400 tabular-nums">d{level.depth}</div>
-              <div class="text-[8px] tabular-nums"
-                   class:text-gray-600={level.depth === deepest}
-                   class:text-gray-500={level.depth !== deepest}>
-                {level.depth === deepest ? 'full depth' : `r ${level.r.toFixed(2)}`}
-              </div>
-            </div>
-          {/each}
-        </div>
-      </div>
     {/if}
   </div>
 {/if}
