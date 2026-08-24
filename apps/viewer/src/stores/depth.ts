@@ -58,6 +58,18 @@ export function resetLoadDepth(storeUrl: string): void {
   loadDepth.set(depths.includes(16) ? 16 : (get(fullDepth) || 0));
 }
 
+/**
+ * What the last upgrade did, so the UI can report it.
+ *
+ * @remarks
+ * An upgrade cannot change the map's imagery: the RGB preview reads bands
+ * 0–2, which every depth stores identically. Without an explicit report a
+ * successful upgrade and a silently failed one look the same.
+ */
+export const upgradeState = writable<
+  { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; depth: number; tiles: number } | { kind: 'error'; message: string }
+>({ kind: 'idle' });
+
 /** Estimated decoded size of `tiles` tiles at `depth`, in bytes. */
 export function estimateBytes(tiles: number, tileH: number, tileW: number, depth: number): number {
   return tiles * tileH * tileW * depth;

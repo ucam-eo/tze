@@ -8,7 +8,7 @@
   import { mapInstance } from '../stores/map';
   import { get } from 'svelte/store';
   import { roiDrawing, drawMode, roiRegions, roiLoading, roiTileCount, clearAllRegions, removeRegion, addRegion, upgradeRegions, type DrawMode } from '../stores/drawing';
-  import { availableDepths, loadDepth, loadedDepth, fullDepth, estimateBytes, formatBytes } from '../stores/depth';
+  import { availableDepths, loadDepth, loadedDepth, fullDepth, upgradeState, estimateBytes, formatBytes } from '../stores/depth';
   import { activeTool, type ToolId } from '../stores/tools';
   import { simSelectedPixel } from '../stores/similarity';
   import { displayManager } from '../stores/zarr';
@@ -314,6 +314,15 @@
     if ($roiDrawing) {
       const hint = $drawMode === 'polygon' ? 'Click to draw polygon' : 'Drag to draw rectangle';
       return { text: hint, color: 'text-term-cyan animate-pulse' };
+    }
+    if ($upgradeState.kind === 'error') {
+      return { text: `Upgrade failed: ${$upgradeState.message}`, color: 'text-red-400' };
+    }
+    if ($upgradeState.kind === 'done') {
+      return {
+        text: `Upgraded ${$upgradeState.tiles} tiles to d${$upgradeState.depth}`,
+        color: 'text-term-cyan',
+      };
     }
     if ($roiLoading) {
       const at = $loadDepth ? ` at d${$loadDepth}` : '';

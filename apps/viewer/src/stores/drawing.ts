@@ -1,7 +1,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { sourceManager, displayManager, metadata } from './zarr';
 import { simEmbeddingTileCount, simRefEmbedding, simSelectedPixel } from './similarity';
-import { loadDepth, loadedDepth, fullDepth, estimateBytes, formatBytes } from './depth';
+import { loadDepth, loadedDepth, fullDepth, upgradeState, estimateBytes, formatBytes } from './depth';
 import { labels } from './classifier';
 import { segmentPolygons } from './segmentation';
 
@@ -129,6 +129,7 @@ export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false 
   const geometry = feature.geometry as GeoJSON.Polygon;
   const managedChunks = await sm.getChunksInRegion(geometry);
 
+  upgradeState.set({ kind: 'idle' });
   // Read the depth once: a mid-load change must not split a region across
   // two widths.
   const depth = get(loadDepth) || get(fullDepth) || undefined;
@@ -186,37 +187,51 @@ export async function addRegion(feature: GeoJSON.Feature, { skipConfirm = false 
 export async function upgradeRegions(): Promise<void> {
   const sm = get(sourceManager);
   const full = get(fullDepth);
-  if (!sm || !full) return;
+  if (!sm || !full) {
+    upgradeState.set({ kind: 'error', message: 'no store open' });
+    return;
+  }
 
+  upgradeState.set({ kind: 'running' });
   loadDepth.set(full);
   segmentPolygons.set({ type: 'FeatureCollection', features: [] });
   // The chunk lookup below can take a moment; show the load as started now.
   roiLoading.set({ loaded: 0, total: 0 });
 
-  for (const region of get(roiRegions)) {
-    if (region.depth === full) continue;
-    const geometry = region.feature.geometry as GeoJSON.Polygon;
-    const managedChunks = await sm.getChunksInRegion(geometry);
-    if (managedChunks.length === 0) continue;
-    await loadManagedChunks(managedChunks, geometry, full);
+  try {
+    let reloaded = 0;
+    for (const region of get(roiRegions)) {
+      if (region.depth === full) continue;
+      const geometry = region.feature.geometry as GeoJSON.Polygon;
+      const managedChunks = await sm.getChunksInRegion(geometry);
+      if (managedChunks.length === 0) continue;
+      await loadManagedChunks(managedChunks, geometry, full);
+      reloaded += managedChunks.length;
+    }
+
+    roiRegions.update(rs => rs.map(r => ({ ...r, depth: full })));
+
+    // Re-extract vectors captured at the old width.
+    labels.update(ls => ls.map(l => {
+      const emb = sm.getEmbeddingAt(l.lngLat[0], l.lngLat[1]);
+      return emb ? { ...l, embedding: emb.embedding } : l;
+    }));
+
+    const px = get(simSelectedPixel);
+    if (px) {
+      const emb = sm.getEmbeddingAt(px.lng, px.lat);
+      if (emb) simRefEmbedding.set(emb.embedding);
+    }
+
+    simEmbeddingTileCount.set(sm.totalTileCount());
+    upgradeState.set({ kind: 'done', depth: sm.regionDepth ?? full, tiles: reloaded });
+  } catch (err) {
+    // A rejection here used to vanish, leaving the button looking inert.
+    upgradeState.set({ kind: 'error', message: (err as Error).message });
+  } finally {
+    roiLoading.set(null);
+    loadedDepth.set(get(sourceManager)?.regionDepth ?? 0);
   }
-
-  roiRegions.update(rs => rs.map(r => ({ ...r, depth: full })));
-
-  // Re-extract vectors captured at the old width.
-  labels.update(ls => ls.map(l => {
-    const emb = sm.getEmbeddingAt(l.lngLat[0], l.lngLat[1]);
-    return emb ? { ...l, embedding: emb.embedding } : l;
-  }));
-
-  const px = get(simSelectedPixel);
-  if (px) {
-    const emb = sm.getEmbeddingAt(px.lng, px.lat);
-    if (emb) simRefEmbedding.set(emb.embedding);
-  }
-
-  roiLoading.set(null);
-  simEmbeddingTileCount.set(sm.totalTileCount());
 }
 
 /** Remove a single region. Evict its exclusive tiles from the embedding cache. */
