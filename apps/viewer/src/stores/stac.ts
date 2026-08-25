@@ -25,10 +25,14 @@ export const DATASET_VERSIONS: DatasetVersion[] = [
     url: 'https://data.source.coop/tessera/tessera/zarr/v1' },
   { id: 'v1.1', label: 'v1.1', sublabel: 'global',
     url: 'https://data.source.coop/tessera/tessera/zarr/v1.1' },
-  // v2-2B-L~beta1 — the 2B-parameter model preview. Shortened to "v2b1" in the
+  // v2-2B-L~betaN — the 2B-parameter model previews. Shortened to "v2bN" in the
   // UI and in `?store=`; the full release name stays in the URL.
   { id: 'v2b1', label: 'v2b1', sublabel: 'global · beta',
     url: 'https://data.source.coop/tessera/tessera/zarr/v2-2B-L~beta1' },
+  // beta2 is still uploading — only a handful of UTM zones are present so far,
+  // so it is advertised as partial rather than global.
+  { id: 'v2b2', label: 'v2b2', sublabel: 'partial · beta',
+    url: 'https://data.source.coop/tessera/tessera/zarr/v2-2B-L~beta2' },
 ];
 
 /** Query-string key carrying the active dataset, so the page URL is shareable.
