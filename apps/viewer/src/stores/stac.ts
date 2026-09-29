@@ -25,6 +25,11 @@ export const DATASET_VERSIONS: DatasetVersion[] = [
     url: 'https://data.source.coop/tessera/tessera/zarr/v1' },
   { id: 'v1.1', label: 'v1.1', sublabel: 'global',
     url: 'https://data.source.coop/tessera/tessera/zarr/v1.1' },
+  // v1.1-dclimate — v1.1 re-exported from the dClimate icechunk store, with
+  // per-zone observation-count sidecars. Shortened to "v1.1d" in the UI and in
+  // `?store=`; the reader ignores the extra arrays.
+  { id: 'v1.1d', label: 'v1.1d', sublabel: 'global · dclimate',
+    url: 'https://data.source.coop/tessera/tessera/zarr/v1.1-dclimate' },
   // v2-2B-L~betaN — the 2B-parameter model previews. Shortened to "v2bN" in the
   // UI and in `?store=`; the full release name stays in the URL.
   { id: 'v2b1', label: 'v2b1', sublabel: 'global · beta',
@@ -35,8 +40,11 @@ export const DATASET_VERSIONS: DatasetVersion[] = [
     url: 'https://data.source.coop/tessera/tessera/zarr/v2-2B-L~beta2' },
 ];
 
+/** The dataset loaded when the page URL names none. */
+const DEFAULT_VERSION = DATASET_VERSIONS.find(v => v.id === 'v1.1d')!;
+
 /** Query-string key carrying the active dataset, so the page URL is shareable.
- *  Built-in stores use a short id (`?store=v1.1`); the default v1.0 omits the
+ *  Built-in stores use a short id (`?store=v1.1`); the default omits the
  *  param entirely; custom stores fall back to the full URL (`?store=<zarr url>`). */
 const STORE_PARAM = 'store';
 
@@ -44,7 +52,7 @@ const STORE_PARAM = 'store';
 function urlToStoreParam(url: string): string | null {
   const version = DATASET_VERSIONS.find(v => v.url === url);
   if (!version) return url;                          // custom store → full URL
-  if (version.id === DATASET_VERSIONS[0].id) return null;  // default → clean URL
+  if (version.id === DEFAULT_VERSION.id) return null;      // default → clean URL
   return version.id;                                 // other built-ins → short id
 }
 
@@ -53,13 +61,13 @@ function storeParamToUrl(param: string): string {
   return DATASET_VERSIONS.find(v => v.id === param)?.url ?? param;
 }
 
-/** Read the initial store URL from the page query string, falling back to v1.0. */
+/** Read the initial store URL from the page query string, falling back to the default. */
 function readInitialStoreUrl(): string {
   try {
     const param = new URLSearchParams(window.location.search).get(STORE_PARAM);
     if (param) return storeParamToUrl(param);
   } catch { /* no window / malformed URL */ }
-  return DATASET_VERSIONS[0].url;
+  return DEFAULT_VERSION.url;
 }
 
 /** Reflect the active store into the page query string (replaceState, no nav). */
