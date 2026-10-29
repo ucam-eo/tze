@@ -261,7 +261,24 @@
       // Terra-draw for polygon/rectangle drawing
       const draw = new TerraDraw({
         adapter: new TerraDrawMapLibreGLAdapter({ map }),
-        modes: [new TerraDrawPolygonMode(), new TerraDrawRectangleMode()],
+        modes: [
+          new TerraDrawPolygonMode({
+            styles: {
+              fillColor: '#00e5ff',
+              outlineColor: '#00e5ff',
+              closingPointColor: '#1e2939',
+              closingPointOutlineColor: '#00e5ff',
+              coordinatePointColor: '#1e2939',
+              coordinatePointOutlineColor: '#00e5ff',
+            },
+          }),
+          new TerraDrawRectangleMode({
+            styles: {
+              fillColor: '#00e5ff',
+              outlineColor: '#00e5ff',
+            },
+          }),
+        ],
       });
       terraDraw = draw;
       draw.on('finish', (id: string | number, ctx: { action: string }) => {
